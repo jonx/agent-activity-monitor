@@ -15,7 +15,7 @@ const cp = require('child_process');
 // Config helpers
 // ---------------------------------------------------------------------------
 function cfg() {
-  return vscode.workspace.getConfiguration('claudeActivity');
+  return vscode.workspace.getConfiguration('agentActivity');
 }
 function logPath() {
   const p = cfg().get('logPath', '');
@@ -538,11 +538,11 @@ function activate(context) {
   const events = new EventState();
   events.loadInitial();
   const provider = new Provider(events);
-  const tree = vscode.window.createTreeView('claudeActivity.tree', { treeDataProvider: provider, showCollapseAll: true });
+  const tree = vscode.window.createTreeView('agentActivity.tree', { treeDataProvider: provider, showCollapseAll: true });
   context.subscriptions.push(tree);
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  status.command = 'workbench.view.extension.claudeActivity';
+  status.command = 'workbench.view.extension.agentActivity';
   context.subscriptions.push(status);
 
   function updateStatus() {
@@ -594,43 +594,43 @@ function activate(context) {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('claudeActivity')) { schedule(); watchLog(); events.reset(); events.loadInitial(); tick(); }
+      if (e.affectsConfiguration('agentActivity')) { schedule(); watchLog(); events.reset(); events.loadInitial(); tick(); }
     }),
-    vscode.commands.registerCommand('claudeActivity.refresh', tick),
-    vscode.commands.registerCommand('claudeActivity.openLog', () => {
+    vscode.commands.registerCommand('agentActivity.refresh', tick),
+    vscode.commands.registerCommand('agentActivity.openLog', () => {
       vscode.workspace.openTextDocument(logPath()).then((d) => vscode.window.showTextDocument(d), () => vscode.window.showWarningMessage('No event log yet: ' + logPath()));
     }),
-    vscode.commands.registerCommand('claudeActivity.clearLog', async () => {
+    vscode.commands.registerCommand('agentActivity.clearLog', async () => {
       const ok = await vscode.window.showWarningMessage('Clear the event log?', { modal: true }, 'Clear');
       if (ok !== 'Clear') return;
       try { fs.writeFileSync(logPath(), ''); } catch { /* ignore */ }
       events.reset();
       tick();
     }),
-    vscode.commands.registerCommand('claudeActivity.kill', async (node) => {
+    vscode.commands.registerCommand('agentActivity.kill', async (node) => {
       if (!node || !node.p) return;
       const ok = await vscode.window.showWarningMessage(`Kill process ${node.p.pid}?\n${cleanCommand(node.p.command).slice(0, 200)}`, { modal: true }, 'Kill');
       if (ok !== 'Kill') return;
       try { process.kill(node.p.pid, 'SIGTERM'); } catch (e) { vscode.window.showErrorMessage(`kill failed: ${e.message}`); }
       setTimeout(tick, 500);
     }),
-    vscode.commands.registerCommand('claudeActivity.pause', (node) => {
+    vscode.commands.registerCommand('agentActivity.pause', (node) => {
       if (!node || !node.p) return;
       try { process.kill(node.p.pid, 'SIGSTOP'); provider.paused.add(node.p.pid); } catch (e) { vscode.window.showErrorMessage(`pause failed: ${e.message}`); }
       tick();
     }),
-    vscode.commands.registerCommand('claudeActivity.resume', (node) => {
+    vscode.commands.registerCommand('agentActivity.resume', (node) => {
       if (!node || !node.p) return;
       try { process.kill(node.p.pid, 'SIGCONT'); } catch (e) { vscode.window.showErrorMessage(`resume failed: ${e.message}`); }
       provider.paused.delete(node.p.pid);
       tick();
     }),
-    vscode.commands.registerCommand('claudeActivity.hideSession', (node) => {
+    vscode.commands.registerCommand('agentActivity.hideSession', (node) => {
       if (!node || !node.s) return;
       provider.hidden.add(node.s.id);
       provider.refresh();
     }),
-    vscode.commands.registerCommand('claudeActivity.copy', (node) => {
+    vscode.commands.registerCommand('agentActivity.copy', (node) => {
       const text = node && node.p ? cleanCommand(node.p.command) : node && node.ev ? node.ev.summary : '';
       if (text) vscode.env.clipboard.writeText(text);
     }),

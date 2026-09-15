@@ -2,7 +2,7 @@
   "name": "agent-activity-monitor",
   "displayName": "Agent Activity Monitor",
   "description": "See what Claude Code and Codex are running right now: commands, background jobs, sub-agents and processes, per session and per project.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "jonx",
   "author": {
     "name": "John Knipper",
@@ -49,56 +49,56 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "claudeActivity",
+          "id": "agentActivity",
           "title": "Agent Activity",
           "icon": "media/icon.svg"
         }
       ]
     },
     "views": {
-      "claudeActivity": [
+      "agentActivity": [
         {
-          "id": "claudeActivity.tree",
+          "id": "agentActivity.tree",
           "name": "Running"
         }
       ]
     },
     "commands": [
       {
-        "command": "claudeActivity.refresh",
+        "command": "agentActivity.refresh",
         "title": "Claude Activity: Refresh",
         "icon": "$(refresh)"
       },
       {
-        "command": "claudeActivity.openLog",
+        "command": "agentActivity.openLog",
         "title": "Claude Activity: Open event log",
         "icon": "$(output)"
       },
       {
-        "command": "claudeActivity.clearLog",
+        "command": "agentActivity.clearLog",
         "title": "Claude Activity: Clear event log"
       },
       {
-        "command": "claudeActivity.kill",
+        "command": "agentActivity.kill",
         "title": "Kill process",
         "icon": "$(close)"
       },
       {
-        "command": "claudeActivity.copy",
+        "command": "agentActivity.copy",
         "title": "Copy command"
       },
       {
-        "command": "claudeActivity.pause",
+        "command": "agentActivity.pause",
         "title": "Pause process (SIGSTOP)",
         "icon": "$(debug-pause)"
       },
       {
-        "command": "claudeActivity.resume",
+        "command": "agentActivity.resume",
         "title": "Resume process (SIGCONT)",
         "icon": "$(debug-continue)"
       },
       {
-        "command": "claudeActivity.hideSession",
+        "command": "agentActivity.hideSession",
         "title": "Hide session from view",
         "icon": "$(eye-closed)"
       }
@@ -106,66 +106,66 @@
     "menus": {
       "view/title": [
         {
-          "command": "claudeActivity.refresh",
-          "when": "view == claudeActivity.tree",
+          "command": "agentActivity.refresh",
+          "when": "view == agentActivity.tree",
           "group": "navigation"
         },
         {
-          "command": "claudeActivity.openLog",
-          "when": "view == claudeActivity.tree",
+          "command": "agentActivity.openLog",
+          "when": "view == agentActivity.tree",
           "group": "navigation"
         },
         {
-          "command": "claudeActivity.clearLog",
-          "when": "view == claudeActivity.tree"
+          "command": "agentActivity.clearLog",
+          "when": "view == agentActivity.tree"
         }
       ],
       "view/item/context": [
         {
-          "command": "claudeActivity.pause",
-          "when": "view == claudeActivity.tree && viewItem == process",
+          "command": "agentActivity.pause",
+          "when": "view == agentActivity.tree && viewItem == process",
           "group": "inline@1"
         },
         {
-          "command": "claudeActivity.resume",
-          "when": "view == claudeActivity.tree && viewItem == pausedProcess",
+          "command": "agentActivity.resume",
+          "when": "view == agentActivity.tree && viewItem == pausedProcess",
           "group": "inline@1"
         },
         {
-          "command": "claudeActivity.kill",
-          "when": "view == claudeActivity.tree && (viewItem == process || viewItem == pausedProcess)",
+          "command": "agentActivity.kill",
+          "when": "view == agentActivity.tree && (viewItem == process || viewItem == pausedProcess)",
           "group": "inline@2"
         },
         {
-          "command": "claudeActivity.hideSession",
-          "when": "view == claudeActivity.tree && viewItem == session",
+          "command": "agentActivity.hideSession",
+          "when": "view == agentActivity.tree && viewItem == session",
           "group": "inline"
         },
         {
-          "command": "claudeActivity.copy",
-          "when": "view == claudeActivity.tree && (viewItem == process || viewItem == pausedProcess || viewItem == tool)"
+          "command": "agentActivity.copy",
+          "when": "view == agentActivity.tree && (viewItem == process || viewItem == pausedProcess || viewItem == tool)"
         }
       ]
     },
     "configuration": {
       "title": "Agent Activity",
       "properties": {
-        "claudeActivity.pollIntervalMs": {
+        "agentActivity.pollIntervalMs": {
           "type": "number",
           "default": 2000,
           "description": "How often to scan processes (ms)."
         },
-        "claudeActivity.logPath": {
+        "agentActivity.logPath": {
           "type": "string",
           "default": "",
           "description": "Path of events.jsonl (default: ~/.claude/activity/events.jsonl)."
         },
-        "claudeActivity.recentCount": {
+        "agentActivity.recentCount": {
           "type": "number",
           "default": 8,
           "description": "How many finished calls to keep per session."
         },
-        "claudeActivity.staleMinutes": {
+        "agentActivity.staleMinutes": {
           "type": "number",
           "default": 15,
           "description": "Hide sessions with no live process and no event for this many minutes."

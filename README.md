@@ -83,18 +83,20 @@ tail -f ~/.claude/activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // ""
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `claudeActivity.pollIntervalMs` | 2000 | process scan interval |
-| `claudeActivity.recentCount` | 8 | finished calls kept per session |
-| `claudeActivity.staleMinutes` | 15 | hide sessions with no live process after this |
-| `claudeActivity.logPath` | `~/.claude/activity/events.jsonl` | event log location |
+| `agentActivity.pollIntervalMs` | 2000 | process scan interval |
+| `agentActivity.recentCount` | 8 | finished calls kept per session |
+| `agentActivity.staleMinutes` | 15 | hide sessions with no live process after this |
+| `agentActivity.logPath` | `~/.claude/activity/events.jsonl` | event log location |
 
 ## Limits
 
 - Sub-agents are API calls, not processes: they only show up through hooks.
 - Cloud jobs (scheduled routines, cloud reviews) leave no local trace.
 - The log stores the first 240 characters of each prompt and 600 of each shell
-  command. Clear it with *Claude Activity: Clear event log* if it should not
-  stick around.
+  command. It rotates above 5 MB (`CLAUDE_ACTIVITY_MAX_BYTES` in the hook's
+  environment changes that); one previous file, `events.jsonl.1`, is kept.
+  Clear it with *Claude Activity: Clear event log* if it should not stick
+  around.
 
 ## License
 

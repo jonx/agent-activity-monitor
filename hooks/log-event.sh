@@ -3,8 +3,14 @@
 # Usage (from settings.json): log-event.sh <event-name>   (hook input JSON on stdin)
 set -u
 LOG_DIR="${CLAUDE_ACTIVITY_DIR:-$HOME/.claude/activity}"
+MAX_BYTES="${CLAUDE_ACTIVITY_MAX_BYTES:-5000000}"   # rotate events.jsonl above this size; one previous file is kept
 mkdir -p "$LOG_DIR"
 EVENT="${1:-unknown}"
+LOG="$LOG_DIR/events.jsonl"
+if [ -f "$LOG" ]; then
+  size=$(stat -f %z "$LOG" 2>/dev/null || stat -c %s "$LOG" 2>/dev/null || echo 0)
+  [ "$size" -gt "$MAX_BYTES" ] && mv -f "$LOG" "$LOG.1"
+fi
 KIND="${2:-claude}"   # claude | codex
 
 # Find the claude process this hook belongs to (walk up the parent chain).
@@ -49,5 +55,5 @@ jq -c \
       elif .agent_type != null then (.agent_type | clip)
       else "" end),
     error: (if $ev == "PermissionDenied" then "permission denied" elif $ev == "PostToolUseFailure" then (.error // .tool_response // "failed" | clip) else null end)
-  }' >> "$LOG_DIR/events.jsonl" 2>/dev/null
+  }' >> "$LOG" 2>/dev/null
 exit 0

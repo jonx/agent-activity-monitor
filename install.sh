@@ -38,6 +38,7 @@ if [ -d "$HOME/.codex" ]; then
 fi
 
 # --- VS Code extension (dev install via symlink) ---------------------------
+if [ "${1:-}" = "--hooks-only" ]; then echo "Hooks installed. Install the extension from the VSIX on the releases page."; exit 0; fi
 EXT_DIR="$HOME/.vscode/extensions"
 mkdir -p "$EXT_DIR"
 ln -sfn "$HERE/extension" "$EXT_DIR/jonx.agent-activity-monitor-0.1.0"

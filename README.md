@@ -41,24 +41,33 @@ Plain JavaScript, no dependencies, no build step.
 
 ## Install
 
-```sh
-git clone https://github.com/jonx/agent-activity-monitor ~/agent-activity-monitor
-~/agent-activity-monitor/install.sh
-```
+Not on the Marketplace yet: the extension ships as a VSIX on the
+[GitHub releases](https://github.com/jonx/agent-activity-monitor/releases) page.
 
-Then `Developer: Reload Window` in VS Code. The view appears in the activity
-bar. Requires `jq`.
+1. Clone the repo and register the hooks (requires `jq`):
+
+   ```sh
+   git clone https://github.com/jonx/agent-activity-monitor ~/agent-activity-monitor
+   ~/agent-activity-monitor/install.sh --hooks-only
+   ```
+
+2. Install the extension: download the `.vsix` from the latest release, then
+   `Extensions: Install from VSIX...` in VS Code, or
+   `code --install-extension agent-activity-monitor-0.1.0.vsix`.
+
+The view appears in the activity bar after a reload.
 
 `install.sh` merges the hooks into your existing settings (backups are written
-next to them) and symlinks the extension into `~/.vscode/extensions`, which is
-handy while hacking on it. For a regular install, build and install a VSIX:
+next to them). Without `--hooks-only` it also symlinks the extension into
+`~/.vscode/extensions`, which is handy while hacking on it. To build the VSIX
+yourself:
 
 ```sh
 cd extension && npx @vscode/vsce package --no-dependencies -o ../agent-activity-monitor.vsix
 code --install-extension ../agent-activity-monitor.vsix
 ```
 
-If you switch from the symlink to the VSIX, remove the symlink first.
+Do not combine the symlink and the VSIX: remove the symlink first.
 
 Codex (0.154+) asks you to trust the hooks the first time; until then only Codex
 processes are visible, not its tool calls.

@@ -1,19 +1,45 @@
 {
   "name": "agent-activity-monitor",
   "displayName": "Agent Activity Monitor",
-  "description": "Shows what Claude Code is running right now: commands, sub-agents, processes.",
+  "description": "See what Claude Code and Codex are running right now: commands, background jobs, sub-agents and processes, per session and per project.",
   "version": "0.1.0",
   "publisher": "jonx",
+  "author": {
+    "name": "John Knipper",
+    "email": "code@jkn.me"
+  },
   "license": "MIT",
+  "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/jonx/agent-activity-monitor"
   },
+  "homepage": "https://github.com/jonx/agent-activity-monitor#readme",
+  "bugs": {
+    "url": "https://github.com/jonx/agent-activity-monitor/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude code",
+    "codex",
+    "agent",
+    "monitor",
+    "processes",
+    "activity"
+  ],
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "galleryBanner": {
+    "color": "#1b2440",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": [
-    "Other"
+  "extensionKind": [
+    "ui"
   ],
   "activationEvents": [
     "onStartupFinished"

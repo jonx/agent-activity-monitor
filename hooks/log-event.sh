@@ -1,9 +1,9 @@
 #!/bin/bash
-# Claude Code hook: append one JSON line per event to ~/.claude/activity/events.jsonl
+# Agent hook (Claude Code, Codex): append one JSON line per event to ~/.agent-activity/events.jsonl
 # Usage (from settings.json): log-event.sh <event-name>   (hook input JSON on stdin)
 set -u
-LOG_DIR="${CLAUDE_ACTIVITY_DIR:-$HOME/.claude/activity}"
-MAX_BYTES="${CLAUDE_ACTIVITY_MAX_BYTES:-5000000}"   # rotate events.jsonl above this size; one previous file is kept
+LOG_DIR="${AGENT_ACTIVITY_DIR:-$HOME/.agent-activity}"
+MAX_BYTES="${AGENT_ACTIVITY_MAX_BYTES:-5000000}"   # rotate events.jsonl above this size; one previous file is kept
 mkdir -p "$LOG_DIR"
 EVENT="${1:-unknown}"
 LOG="$LOG_DIR/events.jsonl"
@@ -13,14 +13,14 @@ if [ -f "$LOG" ]; then
 fi
 KIND="${2:-claude}"   # claude | codex
 
-# Find the claude process this hook belongs to (walk up the parent chain).
-claude_pid=""
+# Find the agent process (claude or codex) this hook belongs to (walk up the parent chain).
+agent_pid=""
 p=$PPID
 for _ in 1 2 3 4 5 6; do
   [ -z "$p" ] || [ "$p" -le 1 ] && break
   cmd=$(ps -o command= -p "$p" 2>/dev/null)
   case "$cmd" in
-    *native-binary/claude*|*/claude\ *|claude\ *|claude|*/codex\ *|*/codex|codex\ *|codex) claude_pid=$p; break ;;
+    *native-binary/claude*|*/claude\ *|claude\ *|claude|*/codex\ *|*/codex|codex\ *|codex) agent_pid=$p; break ;;
   esac
   p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
 done
@@ -28,7 +28,7 @@ done
 jq -c \
   --arg ev "$EVENT" \
   --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg cpid "$claude_pid" \
+  --arg cpid "$agent_pid" \
   --arg kind "$KIND" '
   def clip: (. // "" | tostring | .[0:240]);
   {
@@ -36,7 +36,7 @@ jq -c \
     kind: $kind,
     event: (.hook_event_name // $ev),
     session: .session_id,
-    claude_pid: ($cpid | if . == "" then null else tonumber end),
+    agent_pid: ($cpid | if . == "" then null else tonumber end),
     cwd: .cwd,
     tool: .tool_name,
     tool_use_id: .tool_use_id,

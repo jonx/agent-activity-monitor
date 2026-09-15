@@ -2,7 +2,7 @@
   "name": "agent-activity-monitor",
   "displayName": "Agent Activity Monitor",
   "description": "See what Claude Code and Codex are running right now: commands, background jobs, sub-agents and processes, per session and per project.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "jonx",
   "author": {
     "name": "John Knipper",
@@ -66,17 +66,17 @@
     "commands": [
       {
         "command": "agentActivity.refresh",
-        "title": "Claude Activity: Refresh",
+        "title": "Agent Activity: Refresh",
         "icon": "$(refresh)"
       },
       {
         "command": "agentActivity.openLog",
-        "title": "Claude Activity: Open event log",
+        "title": "Agent Activity: Open event log",
         "icon": "$(output)"
       },
       {
         "command": "agentActivity.clearLog",
-        "title": "Claude Activity: Clear event log"
+        "title": "Agent Activity: Clear event log"
       },
       {
         "command": "agentActivity.kill",
@@ -158,7 +158,7 @@
         "agentActivity.logPath": {
           "type": "string",
           "default": "",
-          "description": "Path of events.jsonl (default: ~/.claude/activity/events.jsonl)."
+          "description": "Path of events.jsonl (default: ~/.agent-activity/events.jsonl)."
         },
         "agentActivity.recentCount": {
           "type": "number",

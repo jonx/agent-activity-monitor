@@ -19,7 +19,7 @@ fires on its own, and from the process table.
   the deepest program running.
 - **Recent calls** per session, with duration, failures in red, `bg` and `agent`
   tags.
-- **Status bar**: `Claude: 2 cmd · 1 agent · 3 proc` or `Claude: idle`.
+- **Status bar**: `Agents: 2 cmd · 1 agent · 3 proc` or `Agents: idle`.
 - Process actions: pause (SIGSTOP), resume (SIGCONT), kill (SIGTERM), copy the
   command. Sessions can be hidden from the view.
 
@@ -29,12 +29,12 @@ fires on its own, and from the process table.
    `~/.codex/hooks.json`, same protocol) for PreToolUse, PostToolUse,
    PostToolUseFailure, PermissionDenied, SubagentStart/Stop, SessionStart/End, UserPromptSubmit
    and Stop. Each event appends one JSON line to
-   `~/.claude/activity/events.jsonl`. Hooks run async, so the agent is not
+   `~/.agent-activity/events.jsonl`. Hooks run async, so the agent is not
    slowed down.
 2. The extension tails that file and scans `ps` every two seconds for
    descendants of every agent process. Background calls are matched to their
    process by command text.
-3. A text mirror of the view is written to `~/.claude/activity/tree.txt`, so an
+3. A text mirror of the view is written to `~/.agent-activity/tree.txt`, so an
    agent (or `tail -f`) can read what you see.
 
 Plain JavaScript, no dependencies, no build step.
@@ -76,7 +76,7 @@ processes are visible, not its tool calls.
 
 ```sh
 node ~/agent-activity-monitor/extension/extension.js --dump     # print the tree as text
-tail -f ~/.claude/activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // "") \(.summary)"'
+tail -f ~/.agent-activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // "") \(.summary)"'
 ```
 
 ## Settings
@@ -86,16 +86,16 @@ tail -f ~/.claude/activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // ""
 | `agentActivity.pollIntervalMs` | 2000 | process scan interval |
 | `agentActivity.recentCount` | 8 | finished calls kept per session |
 | `agentActivity.staleMinutes` | 15 | hide sessions with no live process after this |
-| `agentActivity.logPath` | `~/.claude/activity/events.jsonl` | event log location |
+| `agentActivity.logPath` | `~/.agent-activity/events.jsonl` | event log location |
 
 ## Limits
 
 - Sub-agents are API calls, not processes: they only show up through hooks.
 - Cloud jobs (scheduled routines, cloud reviews) leave no local trace.
 - The log stores the first 240 characters of each prompt and 600 of each shell
-  command. It rotates above 5 MB (`CLAUDE_ACTIVITY_MAX_BYTES` in the hook's
-  environment changes that); one previous file, `events.jsonl.1`, is kept.
-  Clear it with *Claude Activity: Clear event log* if it should not stick
+  command. It rotates above 5 MB (`AGENT_ACTIVITY_MAX_BYTES` in the hook's
+  environment changes that; `AGENT_ACTIVITY_DIR` moves the log); one previous file, `events.jsonl.1`, is kept.
+  Clear it with *Agent Activity: Clear event log* if it should not stick
   around.
 
 ## License

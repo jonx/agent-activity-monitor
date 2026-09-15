@@ -1,7 +1,7 @@
-// Claude Activity — VS Code extension (plain JavaScript, no dependencies).
-// Two data sources, both fed without Claude's cooperation:
-//   1. ~/.claude/activity/events.jsonl, appended by Claude Code hooks (tool calls, sub-agents, sessions)
-//   2. `ps`, scanned every few seconds for descendants of every `claude` process
+// Agent Activity Monitor — VS Code extension (plain JavaScript, no dependencies).
+// Two data sources, both fed without the agent's cooperation:
+//   1. ~/.agent-activity/events.jsonl, appended by Claude Code / Codex hooks (tool calls, sub-agents, sessions)
+//   2. `ps`, scanned every few seconds for descendants of every `claude` / `codex` process
 'use strict';
 
 let vscode;
@@ -19,7 +19,7 @@ function cfg() {
 }
 function logPath() {
   const p = cfg().get('logPath', '');
-  return p && p.trim() ? p.replace(/^~/, os.homedir()) : path.join(os.homedir(), '.claude', 'activity', 'events.jsonl');
+  return p && p.trim() ? p.replace(/^~/, os.homedir()) : path.join(os.homedir(), '.agent-activity', 'events.jsonl');
 }
 
 // ---------------------------------------------------------------------------
@@ -35,11 +35,12 @@ class EventState {
   session(id, ev) {
     let s = this.sessions.get(id);
     if (!s) {
-      s = { id, kind: ev.kind || 'claude', cwd: ev.cwd || '', claudePid: ev.claude_pid || null, running: new Map(), agents: new Map(), recent: [], lastTs: 0, ended: false, idle: true };
+      s = { id, kind: ev.kind || 'claude', cwd: ev.cwd || '', agentPid: ev.agent_pid || ev.claude_pid || null, running: new Map(), agents: new Map(), recent: [], lastTs: 0, ended: false, idle: true };
       this.sessions.set(id, s);
     }
     if (ev.cwd) s.cwd = ev.cwd;
-    if (ev.claude_pid) s.claudePid = ev.claude_pid;
+    const pid = ev.agent_pid || ev.claude_pid; // claude_pid: logs written before 0.1.2
+    if (pid) s.agentPid = pid;
     const t = Date.parse(ev.ts || '') || Date.now();
     if (t > s.lastTs) s.lastTs = t;
     return s;
@@ -113,7 +114,7 @@ class EventState {
   reconcile(procs, procChildrenAll) {
     const now = Date.now();
     for (const s of this.sessions.values()) {
-      const root = s.claudePid ? procs.byPid.get(s.claudePid) : null;
+      const root = s.agentPid ? procs.byPid.get(s.agentPid) : null;
       const live = root ? procChildrenAll(root) : [];
       for (const [k, r] of s.running) {
         if (!r.bg) continue;
@@ -177,7 +178,7 @@ class EventState {
 // ---------------------------------------------------------------------------
 function normCmd(c) { return (c || '').replace(/\\012/g, ' ').replace(/\s+/g, ' ').trim(); }
 
-// Does this logged call correspond to this process? Compare Claude's command with the eval'd part of the wrapper.
+// Does this logged call correspond to this process? Compare the agent's command with the eval'd part of the wrapper.
 function sameCommand(call, proc) {
   if (!call.command) return false;
   const a = normCmd(call.command);
@@ -194,14 +195,14 @@ function rootKind(command) {
   if (/(^|\/)codex(\s|$)/.test(command)) return 'codex';
   return null;
 }
-function isClaudeRoot(command) { return rootKind(command) !== null; }
+function isAgentRoot(command) { return rootKind(command) !== null; }
 // Long-lived helper processes that are not tasks themselves; their children are shown in their place.
 function isHelper(command) {
   return /codex-code-mode-host/.test(command);
 }
 
 function cleanCommand(command) {
-  // Claude's Bash tool wraps commands in: /bin/zsh -c source <snapshot> ... && eval '<cmd>' < /dev/null && pwd -P >| ...
+  // Claude Code's Bash tool wraps commands in: /bin/zsh -c source <snapshot> ... && eval '<cmd>' < /dev/null && pwd -P >| ...
   const m = command.match(/eval '([\s\S]*?)'(?= < \/dev\/null| && pwd -P|$)/);
   let c = m ? m[1].replace(/'"'"'/g, "'") : command;
   c = c.replace(/\\012/g, ' ').replace(/\s+/g, ' ').trim(); // ps prints newlines as \012
@@ -337,7 +338,7 @@ class Provider {
     const out = [];
     for (const s of this.events.sessions.values()) {
       if (this.hidden.has(s.id)) continue;
-      const alive = s.claudePid && this.procs.byPid.has(s.claudePid);
+      const alive = s.agentPid && this.procs.byPid.has(s.agentPid);
       if (s.ended && !alive) continue;
       if (!alive && now - s.lastTs > stale) continue;
       out.push({ ...s, alive });
@@ -383,7 +384,7 @@ class Provider {
 
   topLevel() {
     const sessions = this.liveSessions();
-    const claimed = new Set(sessions.map((s) => s.claudePid));
+    const claimed = new Set(sessions.map((s) => s.agentPid));
     // Group sessions by working directory (one node per project).
     const byProject = new Map();
     for (const s of sessions) {
@@ -434,7 +435,7 @@ class Provider {
     return new Node(title, running ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
       kind: 'session', s,
       description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}${lastHint}`,
-      tooltip: `${s.cwd}\nsession ${s.id}\n${s.kind} pid ${s.claudePid || '?'}`,
+      tooltip: `${s.cwd}\nsession ${s.id}\n${s.kind} pid ${s.agentPid || '?'}`,
       iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : s.alive ? 'circle-filled' : 'circle-outline'),
       contextValue: 'session',
     });
@@ -460,7 +461,7 @@ class Provider {
         iconPath: new vscode.ThemeIcon('hubot'),
       }));
     }
-    const root = s.claudePid ? this.procs.byPid.get(s.claudePid) : null;
+    const root = s.agentPid ? this.procs.byPid.get(s.agentPid) : null;
     const procs = root ? this.procChildren(root) : [];
     if (procs.length) {
       out.push(new Node('Processes', vscode.TreeItemCollapsibleState.Expanded, {
@@ -500,7 +501,7 @@ class Provider {
       kind: 'process', p,
       description: `${paused ? 'PAUSED · ' : ''}${rk ? 'pid ' + p.pid + ' · ' : ''}${call && call.bg ? 'bg · ' : ''}${leaf ? '→ ' + leaf + ' ' : ''}${shortEtime(p.etime)}`,
       tooltip: `${cmd}\n\npid ${p.pid}  ppid ${p.ppid}  elapsed ${p.etime}`,
-      iconPath: new vscode.ThemeIcon(paused ? 'debug-pause' : isClaudeRoot(p.command) ? 'circle-filled' : 'terminal', paused ? new vscode.ThemeColor('charts.yellow') : undefined),
+      iconPath: new vscode.ThemeIcon(paused ? 'debug-pause' : isAgentRoot(p.command) ? 'circle-filled' : 'terminal', paused ? new vscode.ThemeColor('charts.yellow') : undefined),
       contextValue: rk ? 'agentProcess' : paused ? 'pausedProcess' : 'process',
     });
   }
@@ -549,12 +550,12 @@ function activate(context) {
     let cmds = 0, agents = 0, procs = 0;
     for (const s of provider.liveSessions()) {
       cmds += s.running.size; agents += s.agents.size;
-      const root = s.claudePid ? provider.procs.byPid.get(s.claudePid) : null;
+      const root = s.agentPid ? provider.procs.byPid.get(s.agentPid) : null;
       if (root) procs += provider.procChildren(root).length;
     }
     const busy = cmds + agents + procs > 0;
-    status.text = busy ? `$(sync~spin) Claude: ${cmds} cmd · ${agents} agent · ${procs} proc` : '$(check) Claude: idle';
-    status.tooltip = 'Claude Activity — click to open';
+    status.text = busy ? `$(sync~spin) Agents: ${cmds} cmd · ${agents} agent · ${procs} proc` : '$(check) Agents: idle';
+    status.tooltip = 'Agent Activity Monitor — click to open';
     status.show();
   }
 
@@ -567,7 +568,7 @@ function activate(context) {
     for (const pid of provider.paused) if (!provider.procs.byPid.has(pid)) provider.paused.delete(pid);
     provider.refresh();
     updateStatus();
-    // Mirror of what the view shows, for reading from a terminal or by Claude itself.
+    // Mirror of what the view shows, for reading from a terminal or by the agent itself.
     try {
       const text = renderTree(provider);
       if (text !== lastText) { fs.writeFileSync(path.join(path.dirname(logPath()), 'tree.txt'), text); lastText = text; }

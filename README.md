@@ -4,6 +4,8 @@ See what Claude Code (and Codex) are actually running, right now, from VS Code.
 Nothing depends on the agent cooperating: the data comes from hooks the harness
 fires on its own, and from the process table.
 
+<img src="docs/screenshot.png" width="420" alt="Agent Activity Monitor view in VS Code">
+
 
 ## What you get
 
@@ -18,7 +20,8 @@ fires on its own, and from the process table.
 - **Recent calls** per session, with duration, failures in red, `bg` and `agent`
   tags.
 - **Status bar**: `Claude: 2 cmd · 1 agent · 3 proc` or `Claude: idle`.
-- Right-click a process to kill it or copy its command.
+- Process actions: pause (SIGSTOP), resume (SIGCONT), kill (SIGTERM), copy the
+  command. Sessions can be hidden from the view.
 
 ## How it works
 

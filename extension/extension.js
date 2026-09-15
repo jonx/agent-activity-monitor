@@ -4,7 +4,8 @@
 //   2. `ps`, scanned every few seconds for descendants of every `claude` process
 'use strict';
 
-const vscode = require('vscode');
+let vscode;
+try { vscode = require('vscode'); } catch { vscode = require('./vscode-stub'); }
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -34,7 +35,7 @@ class EventState {
   session(id, ev) {
     let s = this.sessions.get(id);
     if (!s) {
-      s = { id, cwd: ev.cwd || '', claudePid: ev.claude_pid || null, running: new Map(), agents: new Map(), recent: [], lastTs: 0, ended: false, idle: true };
+      s = { id, kind: ev.kind || 'claude', cwd: ev.cwd || '', claudePid: ev.claude_pid || null, running: new Map(), agents: new Map(), recent: [], lastTs: 0, ended: false, idle: true };
       this.sessions.set(id, s);
     }
     if (ev.cwd) s.cwd = ev.cwd;
@@ -144,8 +145,16 @@ class EventState {
 // ---------------------------------------------------------------------------
 // Process scan
 // ---------------------------------------------------------------------------
-function isClaudeRoot(command) {
-  return /native-binary\/claude(\s|$)/.test(command) || /(^|\/)claude(\s|$)/.test(command);
+// Which agent owns this process, if it is an agent root: 'claude', 'codex' or null.
+function rootKind(command) {
+  if (/native-binary\/claude(\s|$)/.test(command) || /(^|\/)claude(\s|$)/.test(command)) return 'claude';
+  if (/(^|\/)codex(\s|$)/.test(command)) return 'codex';
+  return null;
+}
+function isClaudeRoot(command) { return rootKind(command) !== null; }
+// Long-lived helper processes that are not tasks themselves; their children are shown in their place.
+function isHelper(command) {
+  return /codex-code-mode-host/.test(command);
 }
 
 function cleanCommand(command) {
@@ -154,6 +163,39 @@ function cleanCommand(command) {
   let c = m ? m[1].replace(/'"'"'/g, "'") : command;
   c = c.replace(/\s+/g, ' ').trim();
   return c;
+}
+
+// Shorten a command for display: drop env exports, keep only basenames of paths, trim.
+function compactCommand(command, max = 70) {
+  let c = cleanCommand(command);
+  c = c.replace(/^(export\s+[^;]*;\s*)+/, '');
+  c = c.replace(/^([A-Za-z_][A-Za-z0-9_]*=\S+;?\s*)+/, '');
+  c = c.replace(/(?:\/[\w.@+%~-]+){2,}/g, (m) => m.split('/').pop());
+  c = c.replace(/2>&1|< \/dev\/null|>\s*\S+/g, '').replace(/\s+/g, ' ').trim();
+  c = c.replace(/^(\/bin\/|\/usr\/bin\/)/, '');
+  c = c.replace(/-[0-9a-f]{16}\b/g, '');
+  return c.length > max ? c.slice(0, max - 1) + '…' : c;
+}
+
+// ps etime "[[dd-]hh:]mm:ss" -> "14s", "2m05", "1h12"
+function shortEtime(etime) {
+  const m = etime.match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
+  if (!m) return etime;
+  const s = (+(m[1] || 0)) * 86400 + (+(m[2] || 0)) * 3600 + (+m[3]) * 60 + (+m[4]);
+  return ago(s * 1000);
+}
+
+// Deepest running descendant, for wrappers: what is actually executing right now.
+function leafProgram(p) {
+  let cur = p;
+  while (cur.kids.length) {
+    const next = cur.kids.filter(interesting);
+    if (!next.length) break;
+    cur = next[next.length - 1];
+  }
+  if (cur === p) return '';
+  const first = cleanCommand(cur.command).split(' ')[0] || '';
+  return first.split('/').pop();
 }
 
 function scanProcesses() {
@@ -173,7 +215,11 @@ function scanProcesses() {
       for (const p of byPid.values()) p.kids = children.get(p.pid) || [];
       const roots = [];
       for (const p of byPid.values()) {
-        if (isClaudeRoot(p.command) && !(byPid.get(p.ppid) && isClaudeRoot(byPid.get(p.ppid).command))) roots.push(p);
+        if (!rootKind(p.command)) continue;
+        const parent = byPid.get(p.ppid);
+        if (parent && rootKind(parent.command)) continue; // nested agent binary: not a root
+        p.kind = rootKind(p.command);
+        roots.push(p);
       }
       resolve({ roots, byPid });
     });
@@ -198,6 +244,13 @@ function ago(ms) {
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m${String(s % 60).padStart(2, '0')}`;
   return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
+}
+
+// File tools: show only the file name; everything else: as logged.
+function shortSummary(ev) {
+  const sum = ev.summary || '';
+  if (['Read', 'Edit', 'Write', 'NotebookEdit', 'Glob', 'Grep'].includes(ev.tool) && sum.startsWith('/')) return sum.split('/').pop();
+  return sum || ev.tool || '';
 }
 
 class Node extends vscode.TreeItem {
@@ -235,6 +288,8 @@ class Provider {
     const out = [];
     for (const k of root.kids) {
       if (!interesting(k)) continue;
+      if (isHelper(k.command)) { out.push(...this.procChildren(k)); continue; }
+      if (compactCommand(k.command) === compactCommand(root.command)) { out.push(...this.procChildren(k)); continue; }
       out.push(k);
     }
     return out;
@@ -257,7 +312,7 @@ class Provider {
       const state = s.ended ? 'terminée' : !s.alive ? 'sans processus' : running ? `${running} en cours` : s.idle ? 'en attente' : 'active';
       const item = new Node(name, vscode.TreeItemCollapsibleState.Expanded, {
         kind: 'session', s,
-        description: state,
+        description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}`,
         tooltip: `${s.cwd}\nsession ${s.id}\nclaude pid ${s.claudePid || '?'}`,
         iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : s.alive ? 'circle-filled' : 'circle-outline'),
         contextValue: 'session',
@@ -267,7 +322,7 @@ class Provider {
     // Claude processes that never emitted a hook event (older sessions, other tools).
     const orphans = this.procs.roots.filter((r) => !claimed.has(r.pid) && this.procChildren(r).length);
     if (orphans.length) {
-      nodes.push(new Node('Autres processus claude', vscode.TreeItemCollapsibleState.Collapsed, {
+      nodes.push(new Node('Autres processus', vscode.TreeItemCollapsibleState.Expanded, {
         kind: 'group',
         items: orphans.map((r) => this.procNode(r)),
         iconPath: new vscode.ThemeIcon('server-process'),
@@ -287,9 +342,9 @@ class Provider {
     const now = Date.now();
     const out = [];
     for (const r of s.running.values()) {
-      out.push(new Node(r.summary || r.tool, vscode.TreeItemCollapsibleState.None, {
+      out.push(new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
         kind: 'leaf', ev: r,
-        description: `${r.tool}${r.background ? ' (bg)' : ''}${r.agent_id ? ' · via agent' : ''} · ${ago(now - r.start)}`,
+        description: `${r.tool}${r.background ? ' bg' : ''}${r.agent_id ? ' agent' : ''} ${ago(now - r.start)}`,
         tooltip: `${r.tool}\n${r.summary}\nstarted ${new Date(r.start).toLocaleTimeString()}${r.agent_id ? `\nsub-agent ${r.agent_type || ''} ${r.agent_id}` : ''}`,
         iconPath: new vscode.ThemeIcon(r.tool === 'Bash' ? 'terminal' : r.tool === 'Agent' ? 'hubot' : r.tool === 'Workflow' ? 'type-hierarchy' : 'tools'),
         contextValue: 'tool',
@@ -298,7 +353,7 @@ class Provider {
     for (const a of s.agents.values()) {
       out.push(new Node(`agent ${a.agent_type || a.summary || ''}`.trim(), vscode.TreeItemCollapsibleState.None, {
         kind: 'leaf',
-        description: `sous-agent · ${ago(now - a.start)}`,
+        description: `sous-agent ${ago(now - a.start)}`,
         tooltip: `agent ${a.agent_id || ''}\n${a.agent_type || ''}`,
         iconPath: new vscode.ThemeIcon('hubot'),
       }));
@@ -315,9 +370,9 @@ class Provider {
     if (s.recent.length) {
       out.push(new Node('Récents', vscode.TreeItemCollapsibleState.Collapsed, {
         kind: 'group',
-        items: s.recent.map((r) => new Node(r.summary || r.tool, vscode.TreeItemCollapsibleState.None, {
+        items: s.recent.map((r) => new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
           kind: 'leaf', ev: r,
-          description: `${r.tool}${r.background ? ' (bg)' : ''} · ${ago(r.end - r.start)} · ${new Date(r.end).toLocaleTimeString()}`,
+          description: `${r.tool}${r.background ? ' bg' : ''} ${ago(r.end - r.start)} · ${new Date(r.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
           tooltip: r.error ? `FAILED\n${r.error}` : `${r.tool}\n${r.summary}`,
           iconPath: new vscode.ThemeIcon(r.ok ? 'check' : 'error', r.ok ? undefined : new vscode.ThemeColor('errorForeground')),
           contextValue: 'tool',
@@ -334,15 +389,41 @@ class Provider {
   procNode(p) {
     const cmd = cleanCommand(p.command);
     const kids = this.procChildren(p);
-    const label = cmd.length > 100 ? cmd.slice(0, 100) + '…' : cmd;
-    return new Node(label, kids.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None, {
+    const leaf = leafProgram(p);
+    const rk = rootKind(p.command);
+    const label = rk ? `${rk}${/app-server/.test(p.command) ? ' app-server' : ''}` : compactCommand(p.command);
+    return new Node(label, kids.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None, {
       kind: 'process', p,
-      description: `pid ${p.pid} · ${p.etime}`,
+      description: `${rk ? 'pid ' + p.pid + ' · ' : ''}${leaf ? '→ ' + leaf + ' ' : ''}${shortEtime(p.etime)}`,
       tooltip: `${cmd}\n\npid ${p.pid}  ppid ${p.ppid}  elapsed ${p.etime}`,
       iconPath: new vscode.ThemeIcon(isClaudeRoot(p.command) ? 'circle-filled' : 'terminal'),
       contextValue: 'process',
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Text rendering (tree.txt next to the log, and `node extension.js --dump`)
+// ---------------------------------------------------------------------------
+function renderTree(provider) {
+  const lines = [];
+  const walk = (nodes, depth) => {
+    for (const n of nodes) {
+      const label = typeof n.label === 'string' ? n.label : (n.label && n.label.label) || '';
+      lines.push(`${'  '.repeat(depth)}${label}${n.description ? '  [' + n.description + ']' : ''}`);
+      if (n.collapsibleState !== vscode.TreeItemCollapsibleState.None) walk(provider.getChildren(n), depth + 1);
+    }
+  };
+  walk(provider.getChildren(), 0);
+  return lines.join('\n') + '\n';
+}
+
+async function dumpMain() {
+  const events = new EventState();
+  events.loadInitial();
+  const provider = new Provider(events);
+  provider.procs = await scanProcesses();
+  process.stdout.write(renderTree(provider));
 }
 
 // ---------------------------------------------------------------------------
@@ -373,11 +454,17 @@ function activate(context) {
   }
 
   let timer = null;
+  let lastText = '';
   async function tick() {
     events.readNew();
     provider.procs = await scanProcesses();
     provider.refresh();
     updateStatus();
+    // Mirror of what the view shows, for reading from a terminal or by Claude itself.
+    try {
+      const text = renderTree(provider);
+      if (text !== lastText) { fs.writeFileSync(path.join(path.dirname(logPath()), 'tree.txt'), text); lastText = text; }
+    } catch { /* ignore */ }
   }
   function schedule() {
     if (timer) clearInterval(timer);
@@ -430,4 +517,6 @@ function activate(context) {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, renderTree, compactCommand };
+
+if (require.main === module && process.argv.includes('--dump')) dumpMain();

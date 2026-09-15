@@ -5,6 +5,7 @@ set -u
 LOG_DIR="${CLAUDE_ACTIVITY_DIR:-$HOME/.claude/activity}"
 mkdir -p "$LOG_DIR"
 EVENT="${1:-unknown}"
+KIND="${2:-claude}"   # claude | codex
 
 # Find the claude process this hook belongs to (walk up the parent chain).
 claude_pid=""
@@ -13,7 +14,7 @@ for _ in 1 2 3 4 5 6; do
   [ -z "$p" ] || [ "$p" -le 1 ] && break
   cmd=$(ps -o command= -p "$p" 2>/dev/null)
   case "$cmd" in
-    *native-binary/claude*|*/claude\ *|claude\ *|claude) claude_pid=$p; break ;;
+    *native-binary/claude*|*/claude\ *|claude\ *|claude|*/codex\ *|*/codex|codex\ *|codex) claude_pid=$p; break ;;
   esac
   p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
 done
@@ -21,10 +22,12 @@ done
 jq -c \
   --arg ev "$EVENT" \
   --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg cpid "$claude_pid" '
+  --arg cpid "$claude_pid" \
+  --arg kind "$KIND" '
   def clip: (. // "" | tostring | .[0:240]);
   {
     ts: $ts,
+    kind: $kind,
     event: (.hook_event_name // $ev),
     session: .session_id,
     claude_pid: ($cpid | if . == "" then null else tonumber end),

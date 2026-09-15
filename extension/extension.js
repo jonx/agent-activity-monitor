@@ -310,22 +310,25 @@ class Provider {
   topLevel() {
     const sessions = this.liveSessions();
     const claimed = new Set(sessions.map((s) => s.claudePid));
-    const nodes = sessions.map((s) => {
-      const running = s.running.size + s.agents.size;
-      const dir = path.basename(s.cwd || '') || s.id.slice(0, 8);
-      const title = s.title ? (s.title.length > 60 ? s.title.slice(0, 59) + '…' : s.title) : s.id.slice(0, 6);
-      const name = `${dir} · ${title}`;
-      const state = s.ended ? 'terminée' : !s.alive ? 'sans processus' : running ? `${running} en cours` : s.idle ? 'en attente' : 'active';
-      const item = new Node(name, vscode.TreeItemCollapsibleState.Expanded, {
-        kind: 'session', s,
-        description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}`,
-        tooltip: `${s.cwd}\nsession ${s.id}\nclaude pid ${s.claudePid || '?'}`,
-        iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : s.alive ? 'circle-filled' : 'circle-outline'),
-        contextValue: 'session',
-      });
-      return item;
-    });
-    // Claude processes that never emitted a hook event (older sessions, other tools).
+    // Group sessions by working directory (one node per project).
+    const byProject = new Map();
+    for (const s of sessions) {
+      const key = s.cwd || '?';
+      if (!byProject.has(key)) byProject.set(key, []);
+      byProject.get(key).push(s);
+    }
+    const nodes = [];
+    for (const [cwd, list] of byProject) {
+      const running = list.reduce((n, s) => n + s.running.size + s.agents.size, 0);
+      const items = list.map((s) => this.sessionNode(s));
+      nodes.push(new Node(path.basename(cwd) || cwd, vscode.TreeItemCollapsibleState.Expanded, {
+        kind: 'group', items,
+        description: `${list.length} session${list.length > 1 ? 's' : ''}${running ? ' · ' + running + ' en cours' : ''}`,
+        tooltip: cwd,
+        iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : 'folder'),
+      }));
+    }
+    // Agent processes that never emitted a hook event (older sessions, other tools).
     const orphans = this.procs.roots.filter((r) => !claimed.has(r.pid) && this.procChildren(r).length);
     if (orphans.length) {
       nodes.push(new Node('Autres processus', vscode.TreeItemCollapsibleState.Expanded, {
@@ -342,6 +345,19 @@ class Provider {
       }));
     }
     return nodes;
+  }
+
+  sessionNode(s) {
+    const running = s.running.size + s.agents.size;
+    const title = s.title ? (s.title.length > 70 ? s.title.slice(0, 69) + '…' : s.title) : `session ${s.id.slice(0, 6)}`;
+    const state = s.ended ? 'terminée' : !s.alive ? 'sans processus' : running ? `${running} en cours` : s.idle ? 'en attente' : 'active';
+    return new Node(title, running ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
+      kind: 'session', s,
+      description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}`,
+      tooltip: `${s.cwd}\nsession ${s.id}\n${s.kind} pid ${s.claudePid || '?'}`,
+      iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : s.alive ? 'circle-filled' : 'circle-outline'),
+      contextValue: 'session',
+    });
   }
 
   sessionChildren(s) {

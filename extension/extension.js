@@ -159,7 +159,7 @@ function isHelper(command) {
 
 function cleanCommand(command) {
   // Claude's Bash tool wraps commands in: /bin/zsh -c source <snapshot> ... && eval '<cmd>' < /dev/null && pwd -P >| ...
-  const m = command.match(/eval '([\s\S]*?)' < \/dev\/null/);
+  const m = command.match(/eval '([\s\S]*?)'(?= < \/dev\/null| && pwd -P|$)/);
   let c = m ? m[1].replace(/'"'"'/g, "'") : command;
   c = c.replace(/\s+/g, ' ').trim();
   return c;
@@ -195,7 +195,7 @@ function leafProgram(p) {
   }
   if (cur === p) return '';
   const first = cleanCommand(cur.command).split(' ')[0] || '';
-  return first.split('/').pop();
+  return first.split('/').pop().replace(/-[0-9a-f]{16}$/, '');
 }
 
 function scanProcesses() {

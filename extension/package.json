@@ -5,47 +5,145 @@
   "version": "0.1.0",
   "publisher": "jonx",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/jonx/claude-activity" },
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jonx/claude-activity"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
-        { "id": "claudeActivity", "title": "Claude Activity", "icon": "media/icon.svg" }
+        {
+          "id": "claudeActivity",
+          "title": "Claude Activity",
+          "icon": "media/icon.svg"
+        }
       ]
     },
     "views": {
       "claudeActivity": [
-        { "id": "claudeActivity.tree", "name": "Running" }
+        {
+          "id": "claudeActivity.tree",
+          "name": "Running"
+        }
       ]
     },
     "commands": [
-      { "command": "claudeActivity.refresh", "title": "Claude Activity: Refresh", "icon": "$(refresh)" },
-      { "command": "claudeActivity.openLog", "title": "Claude Activity: Open event log", "icon": "$(output)" },
-      { "command": "claudeActivity.clearLog", "title": "Claude Activity: Clear event log" },
-      { "command": "claudeActivity.kill", "title": "Kill process", "icon": "$(close)" },
-      { "command": "claudeActivity.copy", "title": "Copy command" }
+      {
+        "command": "claudeActivity.refresh",
+        "title": "Claude Activity: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "claudeActivity.openLog",
+        "title": "Claude Activity: Open event log",
+        "icon": "$(output)"
+      },
+      {
+        "command": "claudeActivity.clearLog",
+        "title": "Claude Activity: Clear event log"
+      },
+      {
+        "command": "claudeActivity.kill",
+        "title": "Kill process",
+        "icon": "$(close)"
+      },
+      {
+        "command": "claudeActivity.copy",
+        "title": "Copy command"
+      },
+      {
+        "command": "claudeActivity.pause",
+        "title": "Pause process (SIGSTOP)",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "claudeActivity.resume",
+        "title": "Resume process (SIGCONT)",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "claudeActivity.hideSession",
+        "title": "Hide session from view",
+        "icon": "$(eye-closed)"
+      }
     ],
     "menus": {
       "view/title": [
-        { "command": "claudeActivity.refresh", "when": "view == claudeActivity.tree", "group": "navigation" },
-        { "command": "claudeActivity.openLog", "when": "view == claudeActivity.tree", "group": "navigation" },
-        { "command": "claudeActivity.clearLog", "when": "view == claudeActivity.tree" }
+        {
+          "command": "claudeActivity.refresh",
+          "when": "view == claudeActivity.tree",
+          "group": "navigation"
+        },
+        {
+          "command": "claudeActivity.openLog",
+          "when": "view == claudeActivity.tree",
+          "group": "navigation"
+        },
+        {
+          "command": "claudeActivity.clearLog",
+          "when": "view == claudeActivity.tree"
+        }
       ],
       "view/item/context": [
-        { "command": "claudeActivity.kill", "when": "view == claudeActivity.tree && viewItem == process", "group": "inline" },
-        { "command": "claudeActivity.copy", "when": "view == claudeActivity.tree && (viewItem == process || viewItem == tool)" }
+        {
+          "command": "claudeActivity.pause",
+          "when": "view == claudeActivity.tree && viewItem == process",
+          "group": "inline@1"
+        },
+        {
+          "command": "claudeActivity.resume",
+          "when": "view == claudeActivity.tree && viewItem == pausedProcess",
+          "group": "inline@1"
+        },
+        {
+          "command": "claudeActivity.kill",
+          "when": "view == claudeActivity.tree && (viewItem == process || viewItem == pausedProcess)",
+          "group": "inline@2"
+        },
+        {
+          "command": "claudeActivity.hideSession",
+          "when": "view == claudeActivity.tree && viewItem == session",
+          "group": "inline"
+        },
+        {
+          "command": "claudeActivity.copy",
+          "when": "view == claudeActivity.tree && (viewItem == process || viewItem == pausedProcess || viewItem == tool)"
+        }
       ]
     },
     "configuration": {
       "title": "Claude Activity",
       "properties": {
-        "claudeActivity.pollIntervalMs": { "type": "number", "default": 2000, "description": "How often to scan processes (ms)." },
-        "claudeActivity.logPath": { "type": "string", "default": "", "description": "Path of events.jsonl (default: ~/.claude/activity/events.jsonl)." },
-        "claudeActivity.recentCount": { "type": "number", "default": 8, "description": "How many finished calls to keep per session." },
-        "claudeActivity.staleMinutes": { "type": "number", "default": 15, "description": "Hide sessions with no live process and no event for this many minutes." }
+        "claudeActivity.pollIntervalMs": {
+          "type": "number",
+          "default": 2000,
+          "description": "How often to scan processes (ms)."
+        },
+        "claudeActivity.logPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path of events.jsonl (default: ~/.claude/activity/events.jsonl)."
+        },
+        "claudeActivity.recentCount": {
+          "type": "number",
+          "default": 8,
+          "description": "How many finished calls to keep per session."
+        },
+        "claudeActivity.staleMinutes": {
+          "type": "number",
+          "default": 15,
+          "description": "Hide sessions with no live process and no event for this many minutes."
+        }
       }
     }
   }

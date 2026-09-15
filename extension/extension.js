@@ -303,6 +303,14 @@ function shortSummary(ev) {
   return sum || ev.tool || '';
 }
 
+function currentWorkspaceRoots() {
+  const folders = (vscode.workspace && vscode.workspace.workspaceFolders) || [];
+  return folders.map((f) => (f.uri && f.uri.fsPath) || '').filter(Boolean);
+}
+function isCurrent(cwd, roots) {
+  return roots.some((r) => cwd === r || cwd.startsWith(r + path.sep) || r.startsWith(cwd + path.sep));
+}
+
 class Node extends vscode.TreeItem {
   constructor(label, state, opts = {}) {
     super(label, state);
@@ -314,6 +322,8 @@ class Provider {
   constructor(events) {
     this.events = events;
     this.procs = { roots: [], byPid: new Map() };
+    this.hidden = new Set(); // session ids hidden by the user (until the extension restarts)
+    this.paused = new Set(); // pids we sent SIGSTOP to
     this._em = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._em.event;
   }
@@ -325,6 +335,7 @@ class Provider {
     const now = Date.now();
     const out = [];
     for (const s of this.events.sessions.values()) {
+      if (this.hidden.has(s.id)) continue;
       const alive = s.claudePid && this.procs.byPid.has(s.claudePid);
       if (s.ended && !alive) continue;
       if (!alive && now - s.lastTs > stale) continue;
@@ -380,14 +391,19 @@ class Provider {
       byProject.get(key).push(s);
     }
     const nodes = [];
-    for (const [cwd, list] of byProject) {
+    const here = currentWorkspaceRoots();
+    const entries = [...byProject].sort((a, b) => Number(isCurrent(b[0], here)) - Number(isCurrent(a[0], here)));
+    for (const [cwd, list] of entries) {
       const running = list.reduce((n, s) => n + s.running.size + s.agents.size, 0);
       const items = list.map((s) => this.sessionNode(s));
+      const current = isCurrent(cwd, here);
+      const color = current ? new vscode.ThemeColor('charts.blue') : undefined;
       nodes.push(new Node(path.basename(cwd) || cwd, vscode.TreeItemCollapsibleState.Expanded, {
         kind: 'group', items,
-        description: `${list.length} session${list.length > 1 ? 's' : ''}${running ? ' · ' + running + ' running' : ''}`,
+        description: `${current ? 'this workspace · ' : ''}${list.length} session${list.length > 1 ? 's' : ''}${running ? ' · ' + running + ' running' : ''}`,
         tooltip: cwd,
-        iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : 'folder'),
+        iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : current ? 'folder-active' : 'folder', color),
+        resourceUri: current ? vscode.Uri.parse('claude-activity:current') : undefined,
       }));
     }
     // Agent processes that never emitted a hook event (older sessions, other tools).
@@ -477,14 +493,15 @@ class Provider {
     const kids = this.procChildren(p);
     const leaf = leafProgram(p);
     const rk = rootKind(p.command);
+    const paused = this.paused.has(p.pid);
     const call = rk ? null : this.callFor(p);
     const label = rk ? `${rk}${/app-server/.test(p.command) ? ' app-server' : ''}` : call && call.summary && call.summary !== call.command ? call.summary : compactCommand(p.command);
     return new Node(label, kids.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None, {
       kind: 'process', p,
-      description: `${rk ? 'pid ' + p.pid + ' · ' : ''}${call && call.bg ? 'bg · ' : ''}${leaf ? '→ ' + leaf + ' ' : ''}${shortEtime(p.etime)}`,
+      description: `${paused ? 'PAUSED · ' : ''}${rk ? 'pid ' + p.pid + ' · ' : ''}${call && call.bg ? 'bg · ' : ''}${leaf ? '→ ' + leaf + ' ' : ''}${shortEtime(p.etime)}`,
       tooltip: `${cmd}\n\npid ${p.pid}  ppid ${p.ppid}  elapsed ${p.etime}`,
-      iconPath: new vscode.ThemeIcon(isClaudeRoot(p.command) ? 'circle-filled' : 'terminal'),
-      contextValue: 'process',
+      iconPath: new vscode.ThemeIcon(paused ? 'debug-pause' : isClaudeRoot(p.command) ? 'circle-filled' : 'terminal', paused ? new vscode.ThemeColor('charts.yellow') : undefined),
+      contextValue: rk ? 'agentProcess' : paused ? 'pausedProcess' : 'process',
     });
   }
 }
@@ -547,6 +564,7 @@ function activate(context) {
     events.readNew();
     provider.procs = await scanProcesses();
     events.reconcile(provider.procs, (r) => provider.procChildrenAll(r));
+    for (const pid of provider.paused) if (!provider.procs.byPid.has(pid)) provider.paused.delete(pid);
     provider.refresh();
     updateStatus();
     // Mirror of what the view shows, for reading from a terminal or by Claude itself.
@@ -595,6 +613,22 @@ function activate(context) {
       if (ok !== 'Kill') return;
       try { process.kill(node.p.pid, 'SIGTERM'); } catch (e) { vscode.window.showErrorMessage(`kill failed: ${e.message}`); }
       setTimeout(tick, 500);
+    }),
+    vscode.commands.registerCommand('claudeActivity.pause', (node) => {
+      if (!node || !node.p) return;
+      try { process.kill(node.p.pid, 'SIGSTOP'); provider.paused.add(node.p.pid); } catch (e) { vscode.window.showErrorMessage(`pause failed: ${e.message}`); }
+      tick();
+    }),
+    vscode.commands.registerCommand('claudeActivity.resume', (node) => {
+      if (!node || !node.p) return;
+      try { process.kill(node.p.pid, 'SIGCONT'); } catch (e) { vscode.window.showErrorMessage(`resume failed: ${e.message}`); }
+      provider.paused.delete(node.p.pid);
+      tick();
+    }),
+    vscode.commands.registerCommand('claudeActivity.hideSession', (node) => {
+      if (!node || !node.s) return;
+      provider.hidden.add(node.s.id);
+      provider.refresh();
     }),
     vscode.commands.registerCommand('claudeActivity.copy', (node) => {
       const text = node && node.p ? cleanCommand(node.p.command) : node && node.ev ? node.ev.summary : '';

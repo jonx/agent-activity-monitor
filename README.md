@@ -24,7 +24,7 @@ fires on its own, and from the process table.
 
 1. `hooks/log-event.sh` is registered in `~/.claude/settings.json` (and
    `~/.codex/hooks.json`, same protocol) for PreToolUse, PostToolUse,
-   PostToolUseFailure, SubagentStart/Stop, SessionStart/End, UserPromptSubmit
+   PostToolUseFailure, PermissionDenied, SubagentStart/Stop, SessionStart/End, UserPromptSubmit
    and Stop. Each event appends one JSON line to
    `~/.claude/activity/events.jsonl`. Hooks run async, so the agent is not
    slowed down.

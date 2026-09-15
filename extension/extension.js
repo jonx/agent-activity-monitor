@@ -76,7 +76,8 @@ class EventState {
         break;
       }
       case 'PostToolUse':
-      case 'PostToolUseFailure': {
+      case 'PostToolUseFailure':
+      case 'PermissionDenied': {
         s.idle = false;
         let key = ev.tool_use_id;
         if (!key || !s.running.has(key)) {
@@ -92,7 +93,7 @@ class EventState {
           break;
         }
         if (key) s.running.delete(key);
-        s.recent.unshift({ ...ev, start: started ? started.start : t, end: t, ok: ev.event === 'PostToolUse', summary: ev.summary || (started && started.summary) || '' , background: ev.background || (started && started.background) });
+        s.recent.unshift({ ...ev, start: started ? started.start : t, end: t, ok: ev.event === 'PostToolUse', denied: ev.event === 'PermissionDenied', summary: ev.summary || (started && started.summary) || '' , background: ev.background || (started && started.background) });
         if (s.recent.length > recentMax) s.recent.length = recentMax;
         break;
       }
@@ -474,8 +475,8 @@ class Provider {
         items: s.recent.map((r) => new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
           kind: 'leaf', ev: r,
           description: `${r.tool}${r.background ? ' bg' : ''}${r.agent_id ? ' agent' : ''} ${ago(r.end - r.start)} · ${new Date(r.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-          tooltip: r.error ? `FAILED\n${r.error}` : `${r.tool}\n${r.summary}`,
-          iconPath: new vscode.ThemeIcon(r.ok ? 'check' : 'error', r.ok ? undefined : new vscode.ThemeColor('errorForeground')),
+          tooltip: r.denied ? `PERMISSION DENIED\n${r.summary}` : r.error ? `FAILED\n${r.error}` : `${r.tool}\n${r.summary}`,
+          iconPath: new vscode.ThemeIcon(r.ok ? 'check' : r.denied ? 'circle-slash' : 'error', r.ok ? undefined : new vscode.ThemeColor(r.denied ? 'charts.yellow' : 'errorForeground')),
           contextValue: 'tool',
         })),
         iconPath: new vscode.ThemeIcon('history'),

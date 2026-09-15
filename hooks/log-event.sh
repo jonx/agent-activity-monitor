@@ -48,6 +48,6 @@ jq -c \
       elif .prompt != null then (.prompt | clip)
       elif .agent_type != null then (.agent_type | clip)
       else "" end),
-    error: (if $ev == "PostToolUseFailure" then (.error // .tool_response // "failed" | clip) else null end)
+    error: (if $ev == "PermissionDenied" then "permission denied" elif $ev == "PostToolUseFailure" then (.error // .tool_response // "failed" | clip) else null end)
   }' >> "$LOG_DIR/events.jsonl" 2>/dev/null
 exit 0

@@ -1,4 +1,4 @@
-# claude-activity
+# agent-activity-monitor
 
 See what Claude Code (and Codex) are actually running, right now, from VS Code.
 Nothing depends on the agent cooperating: the data comes from hooks the harness
@@ -39,8 +39,8 @@ Plain JavaScript, no dependencies, no build step.
 ## Install
 
 ```sh
-git clone https://github.com/jonx/claude-activity ~/claude-activity
-~/claude-activity/install.sh
+git clone https://github.com/jonx/agent-activity-monitor ~/agent-activity-monitor
+~/agent-activity-monitor/install.sh
 ```
 
 Then `Developer: Reload Window` in VS Code. The view appears in the activity
@@ -56,7 +56,7 @@ processes are visible, not its tool calls.
 ## Command line
 
 ```sh
-node ~/claude-activity/extension/extension.js --dump     # print the tree as text
+node ~/agent-activity-monitor/extension/extension.js --dump     # print the tree as text
 tail -f ~/.claude/activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // "") \(.summary)"'
 ```
 

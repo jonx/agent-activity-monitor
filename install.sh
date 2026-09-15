@@ -40,6 +40,6 @@ fi
 # --- VS Code extension (dev install via symlink) ---------------------------
 EXT_DIR="$HOME/.vscode/extensions"
 mkdir -p "$EXT_DIR"
-ln -sfn "$HERE/extension" "$EXT_DIR/jonx.claude-activity-0.1.0"
-echo "VS Code extension linked: $EXT_DIR/jonx.claude-activity-0.1.0"
+ln -sfn "$HERE/extension" "$EXT_DIR/jonx.agent-activity-monitor-0.1.0"
+echo "VS Code extension linked: $EXT_DIR/jonx.agent-activity-monitor-0.1.0"
 echo "Now run 'Developer: Reload Window' in VS Code (or restart it)."

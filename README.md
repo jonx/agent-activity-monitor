@@ -1,50 +1,82 @@
 # claude-activity
 
-Voir ce que Claude Code fait tourner, sans que Claude ait rien à déclarer.
+See what Claude Code (and Codex) are actually running, right now, from VS Code.
+Nothing depends on the agent cooperating: the data comes from hooks the harness
+fires on its own, and from the process table.
 
-Deux sources, toutes deux alimentées automatiquement :
 
-1. **Hooks Claude Code** (`hooks/log-event.sh`). Branchés dans `~/.claude/settings.json` sur
-   PreToolUse, PostToolUse, PostToolUseFailure, SubagentStart, SubagentStop, SessionStart,
-   SessionEnd et Stop. Chaque événement ajoute une ligne JSON à `~/.claude/activity/events.jsonl`.
-   Les hooks sont `async`, donc ils ne ralentissent pas Claude.
-2. **Processus** (`ps`). L'extension repère chaque processus `claude` et liste ses descendants :
-   ce sont les commandes réellement en train de tourner, en arrière-plan ou pas.
+## What you get
 
-## Extension VS Code (`extension/`)
+- **Sessions grouped by project**, each titled with the last prompt you sent it.
+- **Running calls**: shell commands, sub-agents, workflows, with elapsed time.
+- **Background commands** stay listed until their process actually exits, and
+  the process tree shows them under the agent's own description instead of the
+  raw shell wrapper.
+- **Process tree** of every `claude` / `codex` process: what really runs under it
+  (`cargo test`, `python`, `sleep`, …), compacted without paths, with a hint of
+  the deepest program running.
+- **Recent calls** per session, with duration, failures in red, `bg` and `agent`
+  tags.
+- **Status bar**: `Claude: 2 cmd · 1 agent · 3 proc` or `Claude: idle`.
+- Right-click a process to kill it or copy its command.
 
-JavaScript pur, aucune dépendance, pas de build.
+## How it works
 
-- Vue « Claude Activity » dans la barre d'activité : une entrée par session Claude, avec les
-  appels en cours, les sous-agents, l'arbre des processus et les derniers appels terminés.
-- Barre d'état : `Claude: 2 cmd · 1 agent · 3 proc` ou `Claude: idle`. Clic pour ouvrir la vue.
-- Clic droit sur un processus : tuer, copier la commande.
-- Rafraîchi toutes les 2 s (`claudeActivity.pollIntervalMs`) et dès qu'une ligne arrive dans le journal.
+1. `hooks/log-event.sh` is registered in `~/.claude/settings.json` (and
+   `~/.codex/hooks.json`, same protocol) for PreToolUse, PostToolUse,
+   PostToolUseFailure, SubagentStart/Stop, SessionStart/End, UserPromptSubmit
+   and Stop. Each event appends one JSON line to
+   `~/.claude/activity/events.jsonl`. Hooks run async, so the agent is not
+   slowed down.
+2. The extension tails that file and scans `ps` every two seconds for
+   descendants of every agent process. Background calls are matched to their
+   process by command text.
+3. A text mirror of the view is written to `~/.claude/activity/tree.txt`, so an
+   agent (or `tail -f`) can read what you see.
 
-### Installation (mode développement)
+Plain JavaScript, no dependencies, no build step.
 
-```sh
-ln -sfn /Users/aros/claude-activity/extension ~/.vscode/extensions/jonx.claude-activity-0.1.0
-```
-
-Puis dans VS Code : `Developer: Reload Window`.
-
-Pour un paquet installable : `npx @vscode/vsce package` dans `extension/`, puis
-`Extensions: Install from VSIX...`.
-
-### Ce qu'on ne voit pas
-
-- Les sous-agents ne sont pas des processus : ils n'apparaissent que via les hooks.
-- Les jobs cloud (routines, ultrareview) ne laissent aucune trace locale.
-- Une commande lancée en arrière-plan reçoit son PostToolUse immédiatement ; c'est l'arbre des
-  processus qui dit si elle tourne encore.
-
-## Journal
-
-Suivre en direct depuis un terminal :
+## Install
 
 ```sh
-tail -f ~/.claude/activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // .agent_type // "") \(.summary)"'
+git clone https://github.com/jonx/claude-activity ~/claude-activity
+~/claude-activity/install.sh
 ```
 
-Vider : commande `Claude Activity: Clear event log`, ou `: > ~/.claude/activity/events.jsonl`.
+Then `Developer: Reload Window` in VS Code. The view appears in the activity
+bar. Requires `jq`.
+
+`install.sh` merges the hooks into your existing settings (backups are written
+next to them) and symlinks the extension into `~/.vscode/extensions`. To build
+an installable package instead: `cd extension && npx @vscode/vsce package`.
+
+Codex (0.154+) asks you to trust the hooks the first time; until then only Codex
+processes are visible, not its tool calls.
+
+## Command line
+
+```sh
+node ~/claude-activity/extension/extension.js --dump     # print the tree as text
+tail -f ~/.claude/activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // "") \(.summary)"'
+```
+
+## Settings
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `claudeActivity.pollIntervalMs` | 2000 | process scan interval |
+| `claudeActivity.recentCount` | 8 | finished calls kept per session |
+| `claudeActivity.staleMinutes` | 15 | hide sessions with no live process after this |
+| `claudeActivity.logPath` | `~/.claude/activity/events.jsonl` | event log location |
+
+## Limits
+
+- Sub-agents are API calls, not processes: they only show up through hooks.
+- Cloud jobs (scheduled routines, cloud reviews) leave no local trace.
+- The log stores the first 240 characters of each prompt and 600 of each shell
+  command. Clear it with *Claude Activity: Clear event log* if it should not
+  stick around.
+
+## License
+
+MIT

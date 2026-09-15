@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "publisher": "jonx",
   "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/jonx/claude-activity" },
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
   "activationEvents": ["onStartupFinished"],
@@ -17,7 +18,7 @@
     },
     "views": {
       "claudeActivity": [
-        { "id": "claudeActivity.tree", "name": "En cours" }
+        { "id": "claudeActivity.tree", "name": "Running" }
       ]
     },
     "commands": [

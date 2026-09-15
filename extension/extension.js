@@ -385,7 +385,7 @@ class Provider {
       const items = list.map((s) => this.sessionNode(s));
       nodes.push(new Node(path.basename(cwd) || cwd, vscode.TreeItemCollapsibleState.Expanded, {
         kind: 'group', items,
-        description: `${list.length} session${list.length > 1 ? 's' : ''}${running ? ' · ' + running + ' en cours' : ''}`,
+        description: `${list.length} session${list.length > 1 ? 's' : ''}${running ? ' · ' + running + ' running' : ''}`,
         tooltip: cwd,
         iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : 'folder'),
       }));
@@ -393,16 +393,16 @@ class Provider {
     // Agent processes that never emitted a hook event (older sessions, other tools).
     const orphans = this.procs.roots.filter((r) => !claimed.has(r.pid) && this.procChildren(r).length);
     if (orphans.length) {
-      nodes.push(new Node('Autres processus', vscode.TreeItemCollapsibleState.Expanded, {
+      nodes.push(new Node('Other agent processes', vscode.TreeItemCollapsibleState.Expanded, {
         kind: 'group',
         items: orphans.map((r) => this.procNode(r)),
         iconPath: new vscode.ThemeIcon('server-process'),
       }));
     }
     if (!nodes.length) {
-      nodes.push(new Node('Rien en cours', vscode.TreeItemCollapsibleState.None, {
+      nodes.push(new Node('Nothing running', vscode.TreeItemCollapsibleState.None, {
         kind: 'leaf',
-        description: fs.existsSync(logPath()) ? '' : 'aucun journal — les hooks ne sont pas encore actifs',
+        description: fs.existsSync(logPath()) ? '' : 'no event log yet — hooks are not active',
         iconPath: new vscode.ThemeIcon('check'),
       }));
     }
@@ -412,9 +412,9 @@ class Provider {
   sessionNode(s) {
     const running = s.running.size + s.agents.size;
     const title = s.title ? middleEllipsis(s.title, 70) : `session ${s.id.slice(0, 6)}`;
-    const state = s.ended ? 'terminée' : !s.alive ? 'sans processus' : running ? `${running} en cours` : s.idle ? 'en attente' : 'active';
+    const state = s.ended ? 'ended' : !s.alive ? 'no process' : running ? `${running} running` : s.idle ? 'idle' : 'active';
     const last = s.recent[0];
-    const lastHint = last && !s.ended ? ` · ${last.tool} il y a ${ago(Date.now() - last.end)}` : '';
+    const lastHint = last && !s.ended ? ` · ${last.tool} ${ago(Date.now() - last.end)} ago` : '';
     return new Node(title, running ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
       kind: 'session', s,
       description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}${lastHint}`,
@@ -439,7 +439,7 @@ class Provider {
     for (const a of s.agents.values()) {
       out.push(new Node(`agent ${a.agent_type || a.summary || ''}`.trim(), vscode.TreeItemCollapsibleState.None, {
         kind: 'leaf',
-        description: `sous-agent ${ago(now - a.start)}`,
+        description: `sub-agent ${ago(now - a.start)}`,
         tooltip: `agent ${a.agent_id || ''}\n${a.agent_type || ''}`,
         iconPath: new vscode.ThemeIcon('hubot'),
       }));
@@ -447,14 +447,14 @@ class Provider {
     const root = s.claudePid ? this.procs.byPid.get(s.claudePid) : null;
     const procs = root ? this.procChildren(root) : [];
     if (procs.length) {
-      out.push(new Node('Processus', vscode.TreeItemCollapsibleState.Expanded, {
+      out.push(new Node('Processes', vscode.TreeItemCollapsibleState.Expanded, {
         kind: 'group', items: procs.map((p) => this.procNode(p)),
         description: String(procs.length),
         iconPath: new vscode.ThemeIcon('server-process'),
       }));
     }
     if (s.recent.length) {
-      out.push(new Node('Récents', vscode.TreeItemCollapsibleState.Expanded, {
+      out.push(new Node('Recent', vscode.TreeItemCollapsibleState.Expanded, {
         kind: 'group',
         items: s.recent.map((r) => new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
           kind: 'leaf', ev: r,
@@ -467,7 +467,7 @@ class Provider {
       }));
     }
     if (!out.length) {
-      out.push(new Node('rien en cours', vscode.TreeItemCollapsibleState.None, { kind: 'leaf', iconPath: new vscode.ThemeIcon('check') }));
+      out.push(new Node('nothing running', vscode.TreeItemCollapsibleState.None, { kind: 'leaf', iconPath: new vscode.ThemeIcon('check') }));
     }
     return out;
   }
@@ -580,19 +580,19 @@ function activate(context) {
     }),
     vscode.commands.registerCommand('claudeActivity.refresh', tick),
     vscode.commands.registerCommand('claudeActivity.openLog', () => {
-      vscode.workspace.openTextDocument(logPath()).then((d) => vscode.window.showTextDocument(d), () => vscode.window.showWarningMessage('Aucun journal pour le moment : ' + logPath()));
+      vscode.workspace.openTextDocument(logPath()).then((d) => vscode.window.showTextDocument(d), () => vscode.window.showWarningMessage('No event log yet: ' + logPath()));
     }),
     vscode.commands.registerCommand('claudeActivity.clearLog', async () => {
-      const ok = await vscode.window.showWarningMessage('Vider le journal des événements ?', { modal: true }, 'Vider');
-      if (ok !== 'Vider') return;
+      const ok = await vscode.window.showWarningMessage('Clear the event log?', { modal: true }, 'Clear');
+      if (ok !== 'Clear') return;
       try { fs.writeFileSync(logPath(), ''); } catch { /* ignore */ }
       events.reset();
       tick();
     }),
     vscode.commands.registerCommand('claudeActivity.kill', async (node) => {
       if (!node || !node.p) return;
-      const ok = await vscode.window.showWarningMessage(`Tuer le processus ${node.p.pid} ?\n${cleanCommand(node.p.command).slice(0, 200)}`, { modal: true }, 'Tuer');
-      if (ok !== 'Tuer') return;
+      const ok = await vscode.window.showWarningMessage(`Kill process ${node.p.pid}?\n${cleanCommand(node.p.command).slice(0, 200)}`, { modal: true }, 'Kill');
+      if (ok !== 'Kill') return;
       try { process.kill(node.p.pid, 'SIGTERM'); } catch (e) { vscode.window.showErrorMessage(`kill failed: ${e.message}`); }
       setTimeout(tick, 500);
     }),

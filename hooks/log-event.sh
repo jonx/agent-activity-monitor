@@ -44,6 +44,7 @@ jq -c \
       elif .tool_name == "Skill" then (.tool_input.skill | clip)
       elif .tool_name == "Monitor" then (.tool_input.description // .tool_input.command | clip)
       elif .tool_name != null then (.tool_input.file_path // .tool_input.pattern // .tool_input.path // .tool_input.url // "" | clip)
+      elif .prompt != null then (.prompt | clip)
       elif .agent_type != null then (.agent_type | clip)
       else "" end),
     error: (if $ev == "PostToolUseFailure" then (.error // .tool_response // "failed" | clip) else null end)

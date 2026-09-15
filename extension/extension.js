@@ -54,6 +54,10 @@ class EventState {
       case 'SessionStart':
         s.ended = false;
         break;
+      case 'UserPromptSubmit':
+        s.ended = false;
+        if (ev.summary) s.title = ev.summary.replace(/\s+/g, ' ').trim();
+        break;
       case 'SessionEnd':
         s.ended = true;
         s.running.clear();
@@ -308,7 +312,9 @@ class Provider {
     const claimed = new Set(sessions.map((s) => s.claudePid));
     const nodes = sessions.map((s) => {
       const running = s.running.size + s.agents.size;
-      const name = path.basename(s.cwd || '') || s.id.slice(0, 8);
+      const dir = path.basename(s.cwd || '') || s.id.slice(0, 8);
+      const title = s.title ? (s.title.length > 60 ? s.title.slice(0, 59) + '…' : s.title) : s.id.slice(0, 6);
+      const name = `${dir} · ${title}`;
       const state = s.ended ? 'terminée' : !s.alive ? 'sans processus' : running ? `${running} en cours` : s.idle ? 'en attente' : 'active';
       const item = new Node(name, vscode.TreeItemCollapsibleState.Expanded, {
         kind: 'session', s,

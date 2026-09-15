@@ -161,7 +161,7 @@ function cleanCommand(command) {
   // Claude's Bash tool wraps commands in: /bin/zsh -c source <snapshot> ... && eval '<cmd>' < /dev/null && pwd -P >| ...
   const m = command.match(/eval '([\s\S]*?)'(?= < \/dev\/null| && pwd -P|$)/);
   let c = m ? m[1].replace(/'"'"'/g, "'") : command;
-  c = c.replace(/\s+/g, ' ').trim();
+  c = c.replace(/\\012/g, ' ').replace(/\s+/g, ' ').trim(); // ps prints newlines as \012
   return c;
 }
 

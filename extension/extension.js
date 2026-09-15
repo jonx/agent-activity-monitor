@@ -359,9 +359,11 @@ class Provider {
     const running = s.running.size + s.agents.size;
     const title = s.title ? middleEllipsis(s.title, 70) : `session ${s.id.slice(0, 6)}`;
     const state = s.ended ? 'terminée' : !s.alive ? 'sans processus' : running ? `${running} en cours` : s.idle ? 'en attente' : 'active';
+    const last = s.recent[0];
+    const lastHint = last && !s.ended ? ` · ${last.tool} il y a ${ago(Date.now() - last.end)}` : '';
     return new Node(title, running ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
       kind: 'session', s,
-      description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}`,
+      description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}${lastHint}`,
       tooltip: `${s.cwd}\nsession ${s.id}\n${s.kind} pid ${s.claudePid || '?'}`,
       iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : s.alive ? 'circle-filled' : 'circle-outline'),
       contextValue: 'session',
@@ -398,11 +400,11 @@ class Provider {
       }));
     }
     if (s.recent.length) {
-      out.push(new Node('Récents', vscode.TreeItemCollapsibleState.Collapsed, {
+      out.push(new Node('Récents', vscode.TreeItemCollapsibleState.Expanded, {
         kind: 'group',
         items: s.recent.map((r) => new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
           kind: 'leaf', ev: r,
-          description: `${r.tool}${r.background ? ' bg' : ''} ${ago(r.end - r.start)} · ${new Date(r.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+          description: `${r.tool}${r.background ? ' bg' : ''}${r.agent_id ? ' agent' : ''} ${ago(r.end - r.start)} · ${new Date(r.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
           tooltip: r.error ? `FAILED\n${r.error}` : `${r.tool}\n${r.summary}`,
           iconPath: new vscode.ThemeIcon(r.ok ? 'check' : 'error', r.ok ? undefined : new vscode.ThemeColor('errorForeground')),
           contextValue: 'tool',

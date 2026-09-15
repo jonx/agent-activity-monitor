@@ -403,7 +403,6 @@ class Provider {
         description: `${current ? 'this workspace · ' : ''}${list.length} session${list.length > 1 ? 's' : ''}${running ? ' · ' + running + ' running' : ''}`,
         tooltip: cwd,
         iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : current ? 'folder-active' : 'folder', color),
-        resourceUri: current ? vscode.Uri.parse('claude-activity:current') : undefined,
       }));
     }
     // Agent processes that never emitted a hook event (older sessions, other tools).

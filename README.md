@@ -50,8 +50,15 @@ Then `Developer: Reload Window` in VS Code. The view appears in the activity
 bar. Requires `jq`.
 
 `install.sh` merges the hooks into your existing settings (backups are written
-next to them) and symlinks the extension into `~/.vscode/extensions`. To build
-an installable package instead: `cd extension && npx @vscode/vsce package`.
+next to them) and symlinks the extension into `~/.vscode/extensions`, which is
+handy while hacking on it. For a regular install, build and install a VSIX:
+
+```sh
+cd extension && npx @vscode/vsce package --no-dependencies -o ../agent-activity-monitor.vsix
+code --install-extension ../agent-activity-monitor.vsix
+```
+
+If you switch from the symlink to the VSIX, remove the symlink first.
 
 Codex (0.154+) asks you to trust the hooks the first time; until then only Codex
 processes are visible, not its tool calls.

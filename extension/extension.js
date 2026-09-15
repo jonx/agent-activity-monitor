@@ -178,7 +178,15 @@ function compactCommand(command, max = 70) {
   c = c.replace(/2>&1|< \/dev\/null|>\s*\S+/g, '').replace(/\s+/g, ' ').trim();
   c = c.replace(/^(\/bin\/|\/usr\/bin\/)/, '');
   c = c.replace(/-[0-9a-f]{16}\b/g, '');
-  return c.length > max ? c.slice(0, max - 1) + '…' : c;
+  return middleEllipsis(c, max);
+}
+
+// "cargo test --offline -p afsplus-check …matrix_clone --nocapture": keep both ends, cut the middle.
+function middleEllipsis(text, max) {
+  if (text.length <= max) return text;
+  const head = Math.ceil((max - 1) * 0.6);
+  const tail = max - 1 - head;
+  return text.slice(0, head) + '…' + text.slice(text.length - tail);
 }
 
 // ps etime "[[dd-]hh:]mm:ss" -> "14s", "2m05", "1h12"
@@ -349,7 +357,7 @@ class Provider {
 
   sessionNode(s) {
     const running = s.running.size + s.agents.size;
-    const title = s.title ? (s.title.length > 70 ? s.title.slice(0, 69) + '…' : s.title) : `session ${s.id.slice(0, 6)}`;
+    const title = s.title ? middleEllipsis(s.title, 70) : `session ${s.id.slice(0, 6)}`;
     const state = s.ended ? 'terminée' : !s.alive ? 'sans processus' : running ? `${running} en cours` : s.idle ? 'en attente' : 'active';
     return new Node(title, running ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
       kind: 'session', s,

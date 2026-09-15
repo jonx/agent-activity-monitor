@@ -191,10 +191,12 @@ function matchProcess(call, procs) {
 }
 // Which agent owns this process, if it is an agent root: 'claude', 'codex' or null.
 function rootKind(command) {
-  if (/native-binary\/claude(\s|$)/.test(command) || /(^|\/)claude(\s|$)/.test(command)) return 'claude';
-  if (/(^|\/)codex(\s|$)/.test(command)) return 'codex';
+  // macOS/Linux native binary, npm install (node .../claude-code/cli.js), Windows claude.exe
+  if (/native-binary[\/\\]claude(\.exe)?(\s|$)/.test(command) || /(^|[\/\\])claude(\.exe)?(\s|$)/.test(command) || /claude-code[\/\\]cli\.js/.test(command)) return 'claude';
+  if (/(^|[\/\\])codex(\.exe)?(\s|$)/.test(command)) return 'codex';
   return null;
 }
+const IS_WINDOWS = process.platform === 'win32';
 function isAgentRoot(command) { return rootKind(command) !== null; }
 // Long-lived helper processes that are not tasks themselves; their children are shown in their place.
 function isHelper(command) {
@@ -215,6 +217,7 @@ function compactCommand(command, max = 70) {
   c = c.replace(/^(export\s+[^;]*;\s*)+/, '');
   c = c.replace(/^([A-Za-z_][A-Za-z0-9_]*=\S+;?\s*)+/, '');
   c = c.replace(/(?:\/[\w.@+%~-]+){2,}/g, (m) => m.split('/').pop());
+  c = c.replace(/(?:[A-Za-z]:)?(?:\\[\w.@+%~ -]+){2,}/g, (m) => m.split('\\').pop()); // Windows paths
   c = c.replace(/2>&1|< \/dev\/null|>\s*\S+/g, '').replace(/\s+/g, ' ').trim();
   c = c.replace(/^(\/bin\/|\/usr\/bin\/)/, '');
   c = c.replace(/-[0-9a-f]{16}\b/g, '');
@@ -231,7 +234,7 @@ function middleEllipsis(text, max) {
 
 // ps etime "[[dd-]hh:]mm:ss" -> "14s", "2m05", "1h12"
 function shortEtime(etime) {
-  const m = etime.match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
+  const m = String(etime).match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
   if (!m) return etime;
   const s = (+(m[1] || 0)) * 86400 + (+(m[2] || 0)) * 3600 + (+m[3]) * 60 + (+m[4]);
   return ago(s * 1000);
@@ -250,16 +253,46 @@ function leafProgram(p) {
   return first.split('/').pop().replace(/-[0-9a-f]{16}$/, '');
 }
 
-function scanProcesses() {
+// Raw process rows: [{pid, ppid, etime, command}]. `ps` on macOS/Linux, PowerShell on Windows.
+function listProcesses() {
   return new Promise((resolve) => {
+    if (IS_WINDOWS) {
+      const script = 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine | ConvertTo-Json -Compress';
+      cp.execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { maxBuffer: 32 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
+        if (err) return resolve(null);
+        let rows;
+        try { rows = JSON.parse(stdout); } catch { return resolve(null); }
+        if (!Array.isArray(rows)) rows = rows ? [rows] : [];
+        const now = Date.now();
+        resolve(rows.map((r) => {
+          const m = String(r.CreationDate || '').match(/(\d{13})/); // "/Date(1699999999999)/"
+          const start = m ? +m[1] : null;
+          return { pid: +r.ProcessId, ppid: +r.ParentProcessId, etime: start ? ago(now - start) : '', command: r.CommandLine || '' };
+        }));
+      });
+      return;
+    }
     cp.execFile('ps', ['-axo', 'pid=,ppid=,etime=,command='], { maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
-      if (err) return resolve({ roots: [], byPid: new Map() });
-      const byPid = new Map();
-      const children = new Map();
+      if (err) return resolve(null);
+      const rows = [];
       for (const line of stdout.split('\n')) {
         const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
-        if (!m) continue;
-        const p = { pid: +m[1], ppid: +m[2], etime: m[3], command: m[4], kids: [] };
+        if (m) rows.push({ pid: +m[1], ppid: +m[2], etime: m[3], command: m[4] });
+      }
+      resolve(rows);
+    });
+  });
+}
+
+function scanProcesses() {
+  return listProcesses().then((rows) => {
+      // available=false: no process table on this platform; sessions are then judged by their events only.
+      if (!rows) return { roots: [], byPid: new Map(), available: false };
+      const byPid = new Map();
+      const children = new Map();
+      for (const r of rows) {
+        if (!r.pid) continue;
+        const p = { ...r, kids: [] };
         byPid.set(p.pid, p);
         if (!children.has(p.ppid)) children.set(p.ppid, []);
         children.get(p.ppid).push(p);
@@ -273,8 +306,7 @@ function scanProcesses() {
         p.kind = rootKind(p.command);
         roots.push(p);
       }
-      resolve({ roots, byPid });
-    });
+      return { roots, byPid, available: true };
   });
 }
 
@@ -323,7 +355,7 @@ class Node extends vscode.TreeItem {
 class Provider {
   constructor(events) {
     this.events = events;
-    this.procs = { roots: [], byPid: new Map() };
+    this.procs = { roots: [], byPid: new Map(), available: true };
     this.hidden = new Set(); // session ids hidden by the user (until the extension restarts)
     this.paused = new Set(); // pids we sent SIGSTOP to
     this._em = new vscode.EventEmitter();
@@ -338,9 +370,10 @@ class Provider {
     const out = [];
     for (const s of this.events.sessions.values()) {
       if (this.hidden.has(s.id)) continue;
-      const alive = s.agentPid && this.procs.byPid.has(s.agentPid);
+      const known = this.procs.available && s.agentPid;
+      const alive = known ? this.procs.byPid.has(s.agentPid) : !s.ended; // no process table: trust the events
       if (s.ended && !alive) continue;
-      if (!alive && now - s.lastTs > stale) continue;
+      if (known && !alive && now - s.lastTs > stale) continue;
       out.push({ ...s, alive });
     }
     out.sort((a, b) => b.lastTs - a.lastTs);
@@ -502,7 +535,7 @@ class Provider {
       description: `${paused ? 'PAUSED · ' : ''}${rk ? 'pid ' + p.pid + ' · ' : ''}${call && call.bg ? 'bg · ' : ''}${leaf ? '→ ' + leaf + ' ' : ''}${shortEtime(p.etime)}`,
       tooltip: `${cmd}\n\npid ${p.pid}  ppid ${p.ppid}  elapsed ${p.etime}`,
       iconPath: new vscode.ThemeIcon(paused ? 'debug-pause' : isAgentRoot(p.command) ? 'circle-filled' : 'terminal', paused ? new vscode.ThemeColor('charts.yellow') : undefined),
-      contextValue: rk ? 'agentProcess' : paused ? 'pausedProcess' : 'process',
+      contextValue: rk ? 'agentProcess' : paused ? 'pausedProcess' : IS_WINDOWS ? 'processNoPause' : 'process',
     });
   }
 }

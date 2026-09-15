@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Install claude-activity: hooks for Claude Code (and Codex, if present) + the VS Code extension.
 # Safe to re-run. Requires jq. Existing hooks in your settings are kept.
 set -euo pipefail
@@ -41,6 +41,6 @@ fi
 if [ "${1:-}" = "--hooks-only" ]; then echo "Hooks installed. Install the extension from the VSIX on the releases page."; exit 0; fi
 EXT_DIR="$HOME/.vscode/extensions"
 mkdir -p "$EXT_DIR"
-ln -sfn "$HERE/extension" "$EXT_DIR/jonx.agent-activity-monitor-0.1.0"
-echo "VS Code extension linked: $EXT_DIR/jonx.agent-activity-monitor-0.1.0"
+ln -sfn "$HERE/extension" "$EXT_DIR/Jkn.agent-activity-monitor"
+echo "VS Code extension linked: $EXT_DIR/Jkn.agent-activity-monitor"
 echo "Now run 'Developer: Reload Window' in VS Code (or restart it)."

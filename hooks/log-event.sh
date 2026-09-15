@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Agent hook (Claude Code, Codex): append one JSON line per event to ~/.agent-activity/events.jsonl
 # Usage (from settings.json): log-event.sh <event-name>   (hook input JSON on stdin)
 set -u

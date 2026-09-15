@@ -88,6 +88,16 @@ tail -f ~/.agent-activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // "")
 | `agentActivity.staleMinutes` | 15 | hide sessions with no live process after this |
 | `agentActivity.logPath` | `~/.agent-activity/events.jsonl` | event log location |
 
+## Platforms
+
+- **macOS**: developed and tested here.
+- **Linux**: same code paths (`ps`, bash, jq). npm installs of Claude Code
+  (`node …/claude-code/cli.js`) are recognised as agent roots. Not yet tested.
+- **Windows**: hooks need Git Bash and `jq` on PATH (Claude Code runs hooks
+  through bash when it is installed). The process table comes from PowerShell
+  (`Get-CimInstance Win32_Process`); pause/resume are not available. Untested,
+  reports welcome. WSL behaves like Linux.
+
 ## Limits
 
 - Sub-agents are API calls, not processes: they only show up through hooks.

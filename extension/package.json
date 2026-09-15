@@ -1,0 +1,51 @@
+{
+  "name": "claude-activity",
+  "displayName": "Claude Activity",
+  "description": "Shows what Claude Code is running right now: commands, sub-agents, processes.",
+  "version": "0.1.0",
+  "publisher": "jonx",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "claudeActivity", "title": "Claude Activity", "icon": "media/icon.svg" }
+      ]
+    },
+    "views": {
+      "claudeActivity": [
+        { "id": "claudeActivity.tree", "name": "En cours" }
+      ]
+    },
+    "commands": [
+      { "command": "claudeActivity.refresh", "title": "Claude Activity: Refresh", "icon": "$(refresh)" },
+      { "command": "claudeActivity.openLog", "title": "Claude Activity: Open event log", "icon": "$(output)" },
+      { "command": "claudeActivity.clearLog", "title": "Claude Activity: Clear event log" },
+      { "command": "claudeActivity.kill", "title": "Kill process", "icon": "$(close)" },
+      { "command": "claudeActivity.copy", "title": "Copy command" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "claudeActivity.refresh", "when": "view == claudeActivity.tree", "group": "navigation" },
+        { "command": "claudeActivity.openLog", "when": "view == claudeActivity.tree", "group": "navigation" },
+        { "command": "claudeActivity.clearLog", "when": "view == claudeActivity.tree" }
+      ],
+      "view/item/context": [
+        { "command": "claudeActivity.kill", "when": "view == claudeActivity.tree && viewItem == process", "group": "inline" },
+        { "command": "claudeActivity.copy", "when": "view == claudeActivity.tree && (viewItem == process || viewItem == tool)" }
+      ]
+    },
+    "configuration": {
+      "title": "Claude Activity",
+      "properties": {
+        "claudeActivity.pollIntervalMs": { "type": "number", "default": 2000, "description": "How often to scan processes (ms)." },
+        "claudeActivity.logPath": { "type": "string", "default": "", "description": "Path of events.jsonl (default: ~/.claude/activity/events.jsonl)." },
+        "claudeActivity.recentCount": { "type": "number", "default": 8, "description": "How many finished calls to keep per session." },
+        "claudeActivity.staleMinutes": { "type": "number", "default": 15, "description": "Hide sessions with no live process and no event for this many minutes." }
+      }
+    }
+  }
+}

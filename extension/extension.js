@@ -65,8 +65,8 @@ class EventState {
         break;
       case 'Stop':
         s.idle = true;
-        // Background Bash calls already got their PostToolUse when they were launched; nothing left "running" is real.
-        s.running.clear();
+        // Foreground calls are all finished when the turn stops; background ones live on as processes.
+        for (const [k, r] of s.running) if (!r.bg) s.running.delete(k);
         break;
       case 'PreToolUse': {
         s.idle = false;
@@ -84,6 +84,13 @@ class EventState {
           for (const [k, r] of s.running) if (r.tool === ev.tool) { key = k; break; }
         }
         const started = key ? s.running.get(key) : null;
+        const bg = !!(ev.background || (started && started.background));
+        if (bg && started && ev.event === 'PostToolUse') {
+          // Launched in the background: keep it "running" until its process disappears (see reconcile()).
+          started.bg = true;
+          started.launched = t;
+          break;
+        }
         if (key) s.running.delete(key);
         s.recent.unshift({ ...ev, start: started ? started.start : t, end: t, ok: ev.event === 'PostToolUse', summary: ev.summary || (started && started.summary) || '' , background: ev.background || (started && started.background) });
         if (s.recent.length > recentMax) s.recent.length = recentMax;
@@ -98,6 +105,24 @@ class EventState {
         break;
       default:
         break;
+    }
+  }
+
+  // Background calls: finished once no process under the session's agent runs that command any more.
+  reconcile(procs, procChildrenAll) {
+    const now = Date.now();
+    for (const s of this.sessions.values()) {
+      const root = s.claudePid ? procs.byPid.get(s.claudePid) : null;
+      const live = root ? procChildrenAll(root) : [];
+      for (const [k, r] of s.running) {
+        if (!r.bg) continue;
+        if (now - r.launched < 4000) continue; // give the process time to show up in ps
+        const p = matchProcess(r, live);
+        if (p) { r.pid = p.pid; continue; }
+        s.running.delete(k);
+        s.recent.unshift({ ...r, end: now, ok: true });
+        if (s.recent.length > cfg().get('recentCount', 8)) s.recent.length = cfg().get('recentCount', 8);
+      }
     }
   }
 
@@ -149,6 +174,19 @@ class EventState {
 // ---------------------------------------------------------------------------
 // Process scan
 // ---------------------------------------------------------------------------
+function normCmd(c) { return (c || '').replace(/\\012/g, ' ').replace(/\s+/g, ' ').trim(); }
+
+// Does this logged call correspond to this process? Compare Claude's command with the eval'd part of the wrapper.
+function sameCommand(call, proc) {
+  if (!call.command) return false;
+  const a = normCmd(call.command);
+  const b = cleanCommand(proc.command);
+  if (!a || !b) return false;
+  return a === b || (a.length > 60 && b.startsWith(a.slice(0, 60))) || (b.length > 60 && a.startsWith(b.slice(0, 60)));
+}
+function matchProcess(call, procs) {
+  return procs.find((p) => sameCommand(call, p)) || null;
+}
 // Which agent owns this process, if it is an agent root: 'claude', 'codex' or null.
 function rootKind(command) {
   if (/native-binary\/claude(\s|$)/.test(command) || /(^|\/)claude(\s|$)/.test(command)) return 'claude';
@@ -296,6 +334,22 @@ class Provider {
     return out;
   }
 
+  procChildrenAll(root) {
+    const out = [];
+    const walk = (p) => { for (const k of p.kids) { out.push(k); walk(k); } };
+    walk(root);
+    return out;
+  }
+
+  // Which logged call (running or recent) launched this process, if any.
+  callFor(p) {
+    for (const s of this.events.sessions.values()) {
+      for (const r of s.running.values()) if (sameCommand(r, p)) return r;
+      for (const r of s.recent) if (sameCommand(r, p)) return r;
+    }
+    return null;
+  }
+
   procChildren(root) {
     const out = [];
     for (const k of root.kids) {
@@ -376,7 +430,7 @@ class Provider {
     for (const r of s.running.values()) {
       out.push(new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
         kind: 'leaf', ev: r,
-        description: `${r.tool}${r.background ? ' bg' : ''}${r.agent_id ? ' agent' : ''} ${ago(now - r.start)}`,
+        description: `${r.tool}${r.bg ? ' bg' + (r.pid ? ' pid ' + r.pid : '') : ''}${r.agent_id ? ' agent' : ''} ${ago(now - r.start)}`,
         tooltip: `${r.tool}\n${r.summary}\nstarted ${new Date(r.start).toLocaleTimeString()}${r.agent_id ? `\nsub-agent ${r.agent_type || ''} ${r.agent_id}` : ''}`,
         iconPath: new vscode.ThemeIcon(r.tool === 'Bash' ? 'terminal' : r.tool === 'Agent' ? 'hubot' : r.tool === 'Workflow' ? 'type-hierarchy' : 'tools'),
         contextValue: 'tool',
@@ -423,10 +477,11 @@ class Provider {
     const kids = this.procChildren(p);
     const leaf = leafProgram(p);
     const rk = rootKind(p.command);
-    const label = rk ? `${rk}${/app-server/.test(p.command) ? ' app-server' : ''}` : compactCommand(p.command);
+    const call = rk ? null : this.callFor(p);
+    const label = rk ? `${rk}${/app-server/.test(p.command) ? ' app-server' : ''}` : call && call.summary && call.summary !== call.command ? call.summary : compactCommand(p.command);
     return new Node(label, kids.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None, {
       kind: 'process', p,
-      description: `${rk ? 'pid ' + p.pid + ' · ' : ''}${leaf ? '→ ' + leaf + ' ' : ''}${shortEtime(p.etime)}`,
+      description: `${rk ? 'pid ' + p.pid + ' · ' : ''}${call && call.bg ? 'bg · ' : ''}${leaf ? '→ ' + leaf + ' ' : ''}${shortEtime(p.etime)}`,
       tooltip: `${cmd}\n\npid ${p.pid}  ppid ${p.ppid}  elapsed ${p.etime}`,
       iconPath: new vscode.ThemeIcon(isClaudeRoot(p.command) ? 'circle-filled' : 'terminal'),
       contextValue: 'process',
@@ -455,6 +510,7 @@ async function dumpMain() {
   events.loadInitial();
   const provider = new Provider(events);
   provider.procs = await scanProcesses();
+  events.reconcile(provider.procs, (r) => provider.procChildrenAll(r));
   process.stdout.write(renderTree(provider));
 }
 
@@ -490,6 +546,7 @@ function activate(context) {
   async function tick() {
     events.readNew();
     provider.procs = await scanProcesses();
+    events.reconcile(provider.procs, (r) => provider.procChildrenAll(r));
     provider.refresh();
     updateStatus();
     // Mirror of what the view shows, for reading from a terminal or by Claude itself.

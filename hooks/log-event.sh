@@ -37,6 +37,7 @@ jq -c \
     agent_id: .agent_id,
     agent_type: .agent_type,
     background: (.tool_input.run_in_background // false),
+    command: (if .tool_name == "Bash" or .tool_name == "Monitor" then (.tool_input.command // "" | tostring | .[0:600]) else null end),
     summary: (
       if .tool_name == "Bash" then (.tool_input.description // .tool_input.command | clip)
       elif .tool_name == "Agent" then ((.tool_input.description // "agent") + " [" + (.tool_input.subagent_type // "general") + "]" | clip)

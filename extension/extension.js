@@ -141,8 +141,11 @@ class EventState {
         for (const r of s.running.values()) if (r.tool === 'Agent' && !r.agentId) { call = r; break; }
         if (!call && s.pendingAgents && s.pendingAgents.length) call = s.pendingAgents.shift();
         const id = ev.agent_id || `agent-${t}`;
-        if (call) call.agentId = id;
-        s.agents.set(id, { ...ev, start: t, task: call ? call.summary : null });
+        // SubagentStart fires again each time the parent resumes the same agent: keep its task and first start.
+        s.agentTasks = s.agentTasks || new Map();
+        if (call) { call.agentId = id; s.agentTasks.set(id, call.summary); }
+        const prev = s.agents.get(id);
+        s.agents.set(id, { ...ev, start: prev ? prev.start : t, resumed: prev ? t : 0, task: s.agentTasks.get(id) || null });
         break;
       }
       case 'SubagentStop': {

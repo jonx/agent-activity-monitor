@@ -489,7 +489,7 @@ class Provider {
     if (!n) return this.topLevel();
     if (n.kind === 'session') return this.sessionChildren(n.s);
     if (n.kind === 'group') return n.items;
-    if (n.kind === 'process') return this.procChildren(n.p).map((k) => this.procNode(k));
+    if (n.kind === 'process') return this.procChildren(n.p).map((k) => this.procNode(k, n.id));
     return [];
   }
 
@@ -514,7 +514,7 @@ class Provider {
       const current = isCurrent(cwd, here);
       const color = blocked ? COLOR.attention() : running ? COLOR.working() : current ? COLOR.working() : COLOR.idle();
       nodes.push(new Node(path.basename(cwd) || cwd, vscode.TreeItemCollapsibleState.Expanded, {
-        kind: 'group', items,
+        kind: 'group', items, id: `project:${cwd}`,
         description: `${current ? 'this workspace · ' : ''}${list.length} session${list.length > 1 ? 's' : ''}${running ? ' · ' + running + ' running' : ''}${blocked ? ' · ' + blocked + ' needs you' : ''}`,
         tooltip: cwd,
         iconPath: new vscode.ThemeIcon(blocked ? 'bell' : running ? 'sync~spin' : current ? 'folder-active' : 'folder', color),
@@ -524,8 +524,8 @@ class Provider {
     const orphans = this.procs.roots.filter((r) => !claimed.has(r.pid) && this.procChildren(r).length);
     if (orphans.length) {
       nodes.push(new Node('Other agent processes', vscode.TreeItemCollapsibleState.Expanded, {
-        kind: 'group',
-        items: orphans.map((r) => this.procNode(r)),
+        kind: 'group', id: 'orphans',
+        items: orphans.map((r) => this.procNode(r, 'orphans')),
         iconPath: new vscode.ThemeIcon('server-process'),
       }));
     }
@@ -559,7 +559,7 @@ class Provider {
       s.permissionMode ? `permissions ${s.permissionMode}` : '', s.effort ? `effort ${s.effort}` : '',
       s.attention ? `\n${s.attention.msg}` : ''].filter(Boolean).join('\n');
     return new Node(title, running || (s.attention && s.attention.level === 'blocked') ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
-      kind: 'session', s,
+      kind: 'session', s, id: `session:${s.id}`,
       description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}${turn}${lastHint}`,
       tooltip: tip,
       iconPath: new vscode.ThemeIcon(icon, color),
@@ -568,11 +568,11 @@ class Provider {
     });
   }
 
-  callNode(r, now) {
+  callNode(r, now, base) {
     const isBg = !!r.bg;
     const icon = r.tool === 'Bash' ? 'terminal' : r.tool === 'Agent' ? 'hubot' : r.tool === 'Workflow' ? 'type-hierarchy' : r.tool === 'AskUserQuestion' ? 'question' : 'tools';
     return new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
-      kind: 'leaf', ev: r,
+      kind: 'leaf', ev: r, id: `${base}/call:${r.key || r.tool_use_id || r.start}`,
       description: `${r.tool}${isBg ? ' bg' + (r.pid ? ' pid ' + r.pid : '') : ''} ${ago(now - r.start)}`,
       tooltip: `${r.tool}\n${r.summary}\nstarted ${new Date(r.start).toLocaleTimeString()}${r.command ? '\n\n' + r.command : ''}`,
       iconPath: new vscode.ThemeIcon(icon, isBg ? COLOR.background() : COLOR.working()),
@@ -585,15 +585,16 @@ class Provider {
     const now = Date.now();
     const out = [];
     // Direct calls (not made by a sub-agent, and not the Agent call that a sub-agent node already represents).
+    const base = `session:${s.id}`;
     for (const r of s.running.values()) {
       if (r.agent_id || r.agentId) continue;
-      out.push(this.callNode(r, now));
+      out.push(this.callNode(r, now, base));
     }
     for (const [id, a] of s.agents) {
       const calls = [...s.running.values()].filter((r) => r.agent_id === id);
       const label = a.task ? middleEllipsis(a.task.replace(/\s*\[[^\]]*\]$/, ''), 70) : `agent ${a.agent_type || ''}`.trim();
       out.push(new Node(label, calls.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None, {
-        kind: 'group', items: calls.map((r) => this.callNode(r, now)),
+        kind: 'group', id: `${base}/agent:${id}`, items: calls.map((r) => this.callNode(r, now, `${base}/agent:${id}`)),
         description: `${a.agent_type || 'sub-agent'} ${ago(now - a.start)}${calls.length ? ' · ' + calls.length + ' running' : ''}`,
         tooltip: `sub-agent ${a.agent_id || ''}\n${a.agent_type || ''}\n${a.task || ''}`,
         iconPath: new vscode.ThemeIcon('hubot', COLOR.working()),
@@ -603,19 +604,19 @@ class Provider {
     const procs = root ? this.procChildren(root) : [];
     if (procs.length) {
       out.push(new Node('Processes', vscode.TreeItemCollapsibleState.Expanded, {
-        kind: 'group', items: procs.map((p) => this.procNode(p)),
+        kind: 'group', id: `${base}/procs`, items: procs.map((p) => this.procNode(p, base)),
         description: String(procs.length),
         iconPath: new vscode.ThemeIcon('server-process'),
       }));
     }
     if (s.recent.length) {
       out.push(new Node('Recent', vscode.TreeItemCollapsibleState.Expanded, {
-        kind: 'group',
+        kind: 'group', id: `${base}/recent`,
         items: s.recent.map((r) => {
           const status = r.denied ? 'denied' : !r.ok ? (r.exit_code != null ? `exit ${r.exit_code}` : r.interrupted ? 'interrupted' : 'failed') : '';
           const tag = `${r.tool}${r.background ? ' bg' : ''}${r.agent_id ? ' agent' : ''}`;
           return new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
-            kind: 'leaf', ev: r,
+            kind: 'leaf', ev: r, id: `${base}/recent:${r.tool_use_id || r.end}`,
             description: `${status ? status + ' · ' : ''}${tag} ${ago(r.end - r.start)} · ${new Date(r.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
             tooltip: r.denied ? `PERMISSION DENIED\n${r.summary}` : r.error ? `${r.tool} ${status}\n${r.summary}\n\n${r.error}` : `${r.tool}\n${r.summary}${r.command ? '\n\n' + r.command : ''}`,
             iconPath: new vscode.ThemeIcon(r.ok ? 'check' : r.denied ? 'circle-slash' : 'error', r.ok ? COLOR.idle() : r.denied ? COLOR.denied() : COLOR.error()),
@@ -632,7 +633,7 @@ class Provider {
     return out;
   }
 
-  procNode(p) {
+  procNode(p, base = '') {
     const cmd = cleanCommand(p.command);
     const kids = this.procChildren(p);
     const leaf = leafProgram(p);
@@ -641,7 +642,7 @@ class Provider {
     const call = rk ? null : this.callFor(p);
     const label = rk ? `${rk}${/app-server/.test(p.command) ? ' app-server' : ''}` : call && call.summary && call.summary !== call.command ? call.summary : compactCommand(p.command);
     return new Node(label, kids.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None, {
-      kind: 'process', p,
+      kind: 'process', p, id: `${base}/pid:${p.pid}`,
       description: `${paused ? 'PAUSED · ' : ''}${rk ? 'pid ' + p.pid + ' · ' : ''}${call && call.bg ? 'bg · ' : ''}${leaf ? '→ ' + leaf + ' ' : ''}${cpuLabel(p)}${shortEtime(p.etime)}`,
       tooltip: `${cmd}\n\npid ${p.pid}  ppid ${p.ppid}  elapsed ${p.etime}`,
       iconPath: new vscode.ThemeIcon(paused ? 'debug-pause' : isAgentRoot(p.command) ? 'circle-filled' : 'terminal', paused ? COLOR.denied() : call && call.bg ? COLOR.background() : cpuOf(p) >= 1 ? COLOR.working() : COLOR.idle()),

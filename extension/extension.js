@@ -531,7 +531,7 @@ class Provider {
     }
     if (!nodes.length) {
       nodes.push(new Node('Nothing running', vscode.TreeItemCollapsibleState.None, {
-        kind: 'leaf',
+        kind: 'leaf', id: 'empty',
         description: fs.existsSync(logPath()) ? '' : 'no event log yet — hooks are not active',
         iconPath: new vscode.ThemeIcon('check'),
       }));
@@ -628,7 +628,7 @@ class Provider {
       }));
     }
     if (!out.length) {
-      out.push(new Node('nothing running', vscode.TreeItemCollapsibleState.None, { kind: 'leaf', iconPath: new vscode.ThemeIcon('check', COLOR.idle()) }));
+      out.push(new Node('nothing running', vscode.TreeItemCollapsibleState.None, { kind: 'leaf', id: `${base}/empty`, iconPath: new vscode.ThemeIcon('check', COLOR.idle()) }));
     }
     return out;
   }

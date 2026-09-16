@@ -2,7 +2,7 @@
   "name": "agent-activity-monitor",
   "displayName": "Agent Activity Monitor",
   "description": "See what Claude Code and Codex are running right now: commands, background jobs, sub-agents and processes, per session and per project.",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "publisher": "Jkn",
   "author": {
     "name": "John Knipper",
@@ -101,6 +101,14 @@
         "command": "agentActivity.hideSession",
         "title": "Hide session from view",
         "icon": "$(eye-closed)"
+      },
+      {
+        "command": "agentActivity.openSession",
+        "title": "Agent Activity: Open session"
+      },
+      {
+        "command": "agentActivity.openItem",
+        "title": "Agent Activity: Open item"
       }
     ],
     "menus": {
@@ -171,6 +179,68 @@
           "description": "Hide sessions with no live process and no event for this many minutes."
         }
       }
-    }
+    },
+    "colors": [
+      {
+        "id": "agentActivity.working",
+        "description": "Agent Activity: something is running",
+        "defaults": {
+          "dark": "#8ab4f8",
+          "light": "#5b8def",
+          "highContrast": "#8ab4f8",
+          "highContrastLight": "#5b8def"
+        }
+      },
+      {
+        "id": "agentActivity.attention",
+        "description": "Agent Activity: an agent waits for you",
+        "defaults": {
+          "dark": "#f5c58b",
+          "light": "#c7761e",
+          "highContrast": "#f5c58b",
+          "highContrastLight": "#c7761e"
+        }
+      },
+      {
+        "id": "agentActivity.error",
+        "description": "Agent Activity: a call failed",
+        "defaults": {
+          "dark": "#f2a29b",
+          "light": "#c8423a",
+          "highContrast": "#f2a29b",
+          "highContrastLight": "#c8423a"
+        }
+      },
+      {
+        "id": "agentActivity.denied",
+        "description": "Agent Activity: a call was refused or a process is paused",
+        "defaults": {
+          "dark": "#efe19a",
+          "light": "#9c7d00",
+          "highContrast": "#efe19a",
+          "highContrastLight": "#9c7d00"
+        }
+      },
+      {
+        "id": "agentActivity.idle",
+        "description": "Agent Activity: idle or finished",
+        "defaults": {
+          "dark": "#8f95a1",
+          "light": "#8a8f99",
+          "highContrast": "#8f95a1",
+          "highContrastLight": "#8a8f99"
+        }
+      },
+      {
+        "id": "agentActivity.background",
+        "description": "Agent Activity: background command",
+        "defaults": {
+          "dark": "#c9b8ea",
+          "light": "#7d5bb8",
+          "highContrast": "#c9b8ea",
+          "highContrastLight": "#7d5bb8"
+        }
+      }
+    ]
   }
 }

@@ -7,4 +7,5 @@ module.exports = {
   ThemeColor: class { constructor(id) { this.id = id; } },
   EventEmitter: class { constructor() { this.event = () => ({ dispose() {} }); } fire() {} },
   workspace: { getConfiguration: () => ({ get: (_k, d) => d }) },
+  Uri: { file: (f) => ({ fsPath: f }), parse: (u) => ({ toString: () => u }) },
 };

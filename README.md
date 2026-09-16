@@ -17,8 +17,14 @@ fires on its own, and from the process table.
 - **Process tree** of every `claude` / `codex` process: what really runs under it
   (`cargo test`, `python`, `sleep`, …), compacted without paths, with a hint of
   the deepest program running.
-- **Recent calls** per session, with duration, failures in red, `bg` and `agent`
-  tags.
+- **Needs you**: a session blocked on a permission prompt or a question turns
+  orange and jumps to the top; the status bar says so. Click a session to open it.
+- **Sub-agents** named by the task they were given, with their own calls nested.
+- **Recent calls** per session, with duration, exit code and error tail on
+  failure, `bg` and `agent` tags. Click to open the file or copy the command.
+- **Turn info**: elapsed time and number of calls since your last prompt, and a
+  `compacting context` state.
+- **CPU** of the busiest process under each command, so a stuck job is obvious.
 - **Status bar**: `Agents: 2 cmd · 1 agent · 3 proc` or `Agents: idle`.
 - Process actions: pause (SIGSTOP), resume (SIGCONT), kill (SIGTERM), copy the
   command. Sessions can be hidden from the view.
@@ -27,8 +33,8 @@ fires on its own, and from the process table.
 
 1. `hooks/log-event.sh` is registered in `~/.claude/settings.json` (and
    `~/.codex/hooks.json`, same protocol) for PreToolUse, PostToolUse,
-   PostToolUseFailure, PermissionDenied, SubagentStart/Stop, SessionStart/End, UserPromptSubmit
-   and Stop. Each event appends one JSON line to
+   PostToolUseFailure, PermissionDenied, Notification, PreCompact, PostCompact,
+   SubagentStart/Stop, SessionStart/End, UserPromptSubmit and Stop. Each event appends one JSON line to
    `~/.agent-activity/events.jsonl`. Hooks run async, so the agent is not
    slowed down.
 2. The extension tails that file and scans `ps` every two seconds for
@@ -97,6 +103,12 @@ tail -f ~/.agent-activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // "")
   through bash when it is installed). The process table comes from PowerShell
   (`Get-CimInstance Win32_Process`); pause/resume are not available. Untested,
   reports welcome. WSL behaves like Linux.
+
+## Colors
+
+Six theme colors, pastel by default, overridable in `workbench.colorCustomizations`:
+`agentActivity.working`, `agentActivity.attention`, `agentActivity.error`,
+`agentActivity.denied`, `agentActivity.idle`, `agentActivity.background`.
 
 ## Limits
 

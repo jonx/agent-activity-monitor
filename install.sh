@@ -7,7 +7,7 @@ HOOK="$HERE/hooks/log-event.sh"
 chmod +x "$HOOK"
 command -v jq >/dev/null || { echo "jq is required (brew install jq)"; exit 1; }
 
-EVENTS="PreToolUse PostToolUse PostToolUseFailure PermissionDenied SubagentStart SubagentStop SessionStart SessionEnd UserPromptSubmit Stop"
+EVENTS="PreToolUse PostToolUse PostToolUseFailure PermissionDenied Notification PreCompact PostCompact SubagentStart SubagentStop SessionStart SessionEnd UserPromptSubmit Stop"
 
 # --- Claude Code: ~/.claude/settings.json ---------------------------------
 CLAUDE="$HOME/.claude/settings.json"
@@ -31,7 +31,7 @@ if [ -d "$HOME/.codex" ]; then
   jq --arg hook "$HOOK" --arg events "$EVENTS" '
     def entry($ev): {hooks: [{type: "command", command: ($hook + " " + $ev + " codex"), timeout: 10}]};
     def has($list; $ev): any($list[]?; .hooks[]?.command | tostring | test("log-event\\.sh " + $ev + " codex$"));
-    reduce ($events | split(" ") | map(select(. != "PostToolUseFailure" and . != "PermissionDenied")))[] as $ev (.;
+    reduce ($events | split(" ") | map(select(. != "PostToolUseFailure" and . != "PermissionDenied" and . != "Notification")))[] as $ev (.;
       .hooks[$ev] = (if has((.hooks[$ev] // []); $ev) then .hooks[$ev] else ((.hooks[$ev] // []) + [entry($ev)]) end))
   ' "$CODEX" > "$tmp" && mv "$tmp" "$CODEX"
   echo "Codex hooks: $CODEX (Codex will ask you to trust them once)"

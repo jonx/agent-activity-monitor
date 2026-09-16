@@ -43,6 +43,12 @@ jq -c \
     agent_id: .agent_id,
     agent_type: .agent_type,
     background: (.tool_input.run_in_background // false),
+    permission_mode: .permission_mode,
+    effort: .effort,
+    duration_ms: .duration_ms,
+    interrupted: (.is_interrupt // null),
+    notification: (if $ev == "Notification" then (.notification_type // .type // "notification") else null end),
+    exit_code: ([.error // "" | tostring | capture("Exit code (?<c>[0-9]+)") | .c | tonumber] | .[0] // null),
     command: (if .tool_name == "Bash" or .tool_name == "Monitor" then (.tool_input.command // "" | tostring | .[0:600]) else null end),
     summary: (
       if .tool_name == "Bash" then (.tool_input.description // .tool_input.command | clip)
@@ -52,8 +58,9 @@ jq -c \
       elif .tool_name == "Monitor" then (.tool_input.description // .tool_input.command | clip)
       elif .tool_name != null then (.tool_input.file_path // .tool_input.pattern // .tool_input.path // .tool_input.url // "" | clip)
       elif .prompt != null then (.prompt | clip)
+      elif .message != null then (.message | clip)
       elif .agent_type != null then (.agent_type | clip)
       else "" end),
-    error: (if $ev == "PermissionDenied" then "permission denied" elif $ev == "PostToolUseFailure" then (.error // .tool_response // "failed" | clip) else null end)
+    error: (if $ev == "PermissionDenied" then "permission denied" elif $ev == "PostToolUseFailure" then (.error // .tool_response // "failed" | tostring | .[-400:]) else null end)
   }' >> "$LOG" 2>/dev/null
 exit 0

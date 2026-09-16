@@ -35,12 +35,15 @@ class EventState {
   session(id, ev) {
     let s = this.sessions.get(id);
     if (!s) {
-      s = { id, kind: ev.kind || 'claude', cwd: ev.cwd || '', agentPid: ev.agent_pid || ev.claude_pid || null, running: new Map(), agents: new Map(), recent: [], lastTs: 0, ended: false, idle: true };
+      s = { id, kind: ev.kind || 'claude', cwd: ev.cwd || '', agentPid: ev.agent_pid || ev.claude_pid || null, running: new Map(), agents: new Map(), recent: [], lastTs: 0, ended: false, idle: true,
+        attention: null, compacting: false, turnStart: 0, turnCalls: 0, permissionMode: null, effort: null };
       this.sessions.set(id, s);
     }
     if (ev.cwd) s.cwd = ev.cwd;
     const pid = ev.agent_pid || ev.claude_pid; // claude_pid: logs written before 0.1.2
     if (pid) s.agentPid = pid;
+    if (ev.permission_mode) s.permissionMode = ev.permission_mode;
+    if (ev.effort) s.effort = ev.effort;
     const t = Date.parse(ev.ts || '') || Date.now();
     if (t > s.lastTs) s.lastTs = t;
     return s;
@@ -57,23 +60,48 @@ class EventState {
         break;
       case 'UserPromptSubmit':
         s.ended = false;
-        if (ev.summary) s.title = ev.summary.replace(/\s+/g, ' ').trim();
+        s.idle = false;
+        s.attention = null;
+        s.turnStart = t;
+        s.turnCalls = 0;
+        // Prompts injected by the harness (background task notifications, system tags) are not the user's words.
+        if (ev.summary && !/^\s*</.test(ev.summary)) s.title = ev.summary.replace(/\s+/g, ' ').trim();
         break;
       case 'SessionEnd':
         s.ended = true;
+        s.attention = null;
         s.running.clear();
         s.agents.clear();
         break;
       case 'Stop':
         s.idle = true;
+        s.compacting = false;
+        if (s.attention && s.attention.level !== 'idle') s.attention = null;
         // Foreground calls are all finished when the turn stops; background ones live on as processes.
         for (const [k, r] of s.running) if (!r.bg) s.running.delete(k);
         break;
+      case 'PreCompact':
+        s.compacting = true;
+        break;
+      case 'PostCompact':
+        s.compacting = false;
+        break;
+      case 'Notification': {
+        // permission_prompt / elicitation_dialog: the agent is blocked on you. idle_prompt: it finished and waits.
+        const kind = ev.notification || '';
+        if (/permission|elicit|question|input/.test(kind)) s.attention = { level: 'blocked', msg: ev.summary || kind, t };
+        else if (/idle/.test(kind)) s.attention = { level: 'idle', msg: ev.summary || 'waiting for your input', t };
+        break;
+      }
       case 'PreToolUse': {
         s.idle = false;
         s.ended = false;
+        s.compacting = false;
+        s.turnCalls += 1;
+        if (s.attention && s.attention.level === 'idle') s.attention = null;
         const key = ev.tool_use_id || `${ev.tool}-${t}`;
         s.running.set(key, { ...ev, start: t, key });
+        if (ev.tool === 'AskUserQuestion') s.attention = { level: 'blocked', msg: 'asks you a question', t };
         break;
       }
       case 'PostToolUse':
@@ -86,25 +114,36 @@ class EventState {
           for (const [k, r] of s.running) if (r.tool === ev.tool) { key = k; break; }
         }
         const started = key ? s.running.get(key) : null;
+        if (s.attention && s.attention.level === 'blocked' && (!started || started.tool !== 'Agent')) s.attention = null;
         const bg = !!(ev.background || (started && started.background));
-        if (bg && started && ev.event === 'PostToolUse') {
+        if (bg && started && ev.event === 'PostToolUse' && ev.tool !== 'Agent') {
           // Launched in the background: keep it "running" until its process disappears (see reconcile()).
           started.bg = true;
           started.launched = t;
           break;
         }
         if (key) s.running.delete(key);
-        s.recent.unshift({ ...ev, start: started ? started.start : t, end: t, ok: ev.event === 'PostToolUse', denied: ev.event === 'PermissionDenied', summary: ev.summary || (started && started.summary) || '' , background: ev.background || (started && started.background) });
+        const dur = ev.duration_ms != null ? ev.duration_ms : (started ? t - started.start : 0);
+        s.recent.unshift({ ...ev, start: t - dur, end: t, ok: ev.event === 'PostToolUse', denied: ev.event === 'PermissionDenied',
+          summary: ev.summary || (started && started.summary) || '', command: ev.command || (started && started.command) || null,
+          background: bg, agent_id: ev.agent_id || (started && started.agent_id) || null });
         if (s.recent.length > recentMax) s.recent.length = recentMax;
         break;
       }
-      case 'SubagentStart':
-        s.agents.set(ev.agent_id || `agent-${t}`, { ...ev, start: t });
+      case 'SubagentStart': {
+        // Pair with the oldest running Agent call that has no sub-agent yet: that call's description names the task.
+        let call = null;
+        for (const r of s.running.values()) if (r.tool === 'Agent' && !r.agentId) { call = r; break; }
+        const id = ev.agent_id || `agent-${t}`;
+        if (call) call.agentId = id;
+        s.agents.set(id, { ...ev, start: t, task: call ? call.summary : null });
         break;
-      case 'SubagentStop':
-        if (ev.agent_id && s.agents.has(ev.agent_id)) s.agents.delete(ev.agent_id);
-        else { const k = s.agents.keys().next().value; if (k) s.agents.delete(k); }
+      }
+      case 'SubagentStop': {
+        const id = ev.agent_id && s.agents.has(ev.agent_id) ? ev.agent_id : s.agents.keys().next().value;
+        if (id) s.agents.delete(id);
         break;
+      }
       default:
         break;
     }
@@ -252,6 +291,17 @@ function leafProgram(p) {
   const first = cleanCommand(cur.command).split(' ')[0] || '';
   return first.split('/').pop().replace(/-[0-9a-f]{16}$/, '');
 }
+function cpuOf(p) {
+  // CPU of the busiest process in the subtree: what tells a stuck job from a working one.
+  let best = p.cpu || 0;
+  const walk = (q) => { for (const k of q.kids) { if ((k.cpu || 0) > best) best = k.cpu; walk(k); } };
+  walk(p);
+  return best;
+}
+function cpuLabel(p) {
+  const c = cpuOf(p);
+  return c >= 1 ? `${Math.round(c)}% ` : '';
+}
 
 // Raw process rows: [{pid, ppid, etime, command}]. `ps` on macOS/Linux, PowerShell on Windows.
 function listProcesses() {
@@ -272,12 +322,12 @@ function listProcesses() {
       });
       return;
     }
-    cp.execFile('ps', ['-axo', 'pid=,ppid=,etime=,command='], { maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+    cp.execFile('ps', ['-axo', 'pid=,ppid=,etime=,%cpu=,command='], { maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
       if (err) return resolve(null);
       const rows = [];
       for (const line of stdout.split('\n')) {
-        const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
-        if (m) rows.push({ pid: +m[1], ppid: +m[2], etime: m[3], command: m[4] });
+        const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+([\d.]+)\s+(.*)$/);
+        if (m) rows.push({ pid: +m[1], ppid: +m[2], etime: m[3], cpu: +m[4], command: m[5] });
       }
       resolve(rows);
     });
@@ -337,6 +387,16 @@ function shortSummary(ev) {
   return sum || ev.tool || '';
 }
 
+// Theme colors contributed in package.json (pastel defaults, overridable in workbench.colorCustomizations).
+const COLOR = {
+  working: () => new vscode.ThemeColor('agentActivity.working'),
+  attention: () => new vscode.ThemeColor('agentActivity.attention'),
+  error: () => new vscode.ThemeColor('agentActivity.error'),
+  denied: () => new vscode.ThemeColor('agentActivity.denied'),
+  idle: () => new vscode.ThemeColor('agentActivity.idle'),
+  background: () => new vscode.ThemeColor('agentActivity.background'),
+};
+
 function currentWorkspaceRoots() {
   const folders = (vscode.workspace && vscode.workspace.workspaceFolders) || [];
   return folders.map((f) => (f.uri && f.uri.fsPath) || '').filter(Boolean);
@@ -357,6 +417,7 @@ class Provider {
     this.events = events;
     this.procs = { roots: [], byPid: new Map(), available: true };
     this.hidden = new Set(); // session ids hidden by the user (until the extension restarts)
+    this.meta = new Map(); // session id -> {name, status} from ~/.claude/sessions/*.json
     this.paused = new Set(); // pids we sent SIGSTOP to
     this._em = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._em.event;
@@ -430,14 +491,16 @@ class Provider {
     const entries = [...byProject].sort((a, b) => Number(isCurrent(b[0], here)) - Number(isCurrent(a[0], here)));
     for (const [cwd, list] of entries) {
       const running = list.reduce((n, s) => n + s.running.size + s.agents.size, 0);
+      const blocked = list.filter((s) => s.attention && s.attention.level === 'blocked').length;
+      list.sort((a, b) => Number(!!(b.attention && b.attention.level === 'blocked')) - Number(!!(a.attention && a.attention.level === 'blocked')) || b.lastTs - a.lastTs);
       const items = list.map((s) => this.sessionNode(s));
       const current = isCurrent(cwd, here);
-      const color = current ? new vscode.ThemeColor('charts.blue') : undefined;
+      const color = blocked ? COLOR.attention() : running ? COLOR.working() : current ? COLOR.working() : COLOR.idle();
       nodes.push(new Node(path.basename(cwd) || cwd, vscode.TreeItemCollapsibleState.Expanded, {
         kind: 'group', items,
-        description: `${current ? 'this workspace · ' : ''}${list.length} session${list.length > 1 ? 's' : ''}${running ? ' · ' + running + ' running' : ''}`,
+        description: `${current ? 'this workspace · ' : ''}${list.length} session${list.length > 1 ? 's' : ''}${running ? ' · ' + running + ' running' : ''}${blocked ? ' · ' + blocked + ' needs you' : ''}`,
         tooltip: cwd,
-        iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : current ? 'folder-active' : 'folder', color),
+        iconPath: new vscode.ThemeIcon(blocked ? 'bell' : running ? 'sync~spin' : current ? 'folder-active' : 'folder', color),
       }));
     }
     // Agent processes that never emitted a hook event (older sessions, other tools).
@@ -461,37 +524,62 @@ class Provider {
 
   sessionNode(s) {
     const running = s.running.size + s.agents.size;
-    const title = s.title ? middleEllipsis(s.title, 70) : `session ${s.id.slice(0, 6)}`;
-    const state = s.ended ? 'ended' : !s.alive ? 'no process' : running ? `${running} running` : s.idle ? 'idle' : 'active';
+    const meta = this.meta.get(s.id);
+    const title = s.title ? middleEllipsis(s.title, 70) : meta && meta.name ? meta.name : `session ${s.id.slice(0, 6)}`;
+    const now = Date.now();
+    let state, icon, color;
+    if (s.attention && s.attention.level === 'blocked') { state = `needs you: ${s.attention.msg}`; icon = 'bell'; color = COLOR.attention(); }
+    else if (s.ended) { state = 'ended'; icon = 'circle-outline'; color = COLOR.idle(); }
+    else if (!s.alive) { state = 'no process'; icon = 'circle-outline'; color = COLOR.idle(); }
+    else if (s.compacting) { state = 'compacting context'; icon = 'fold'; color = COLOR.working(); }
+    else if (running) { state = `${running} running`; icon = 'sync~spin'; color = COLOR.working(); }
+    else if (s.idle || (meta && meta.status === 'idle')) { state = s.attention ? 'waiting for you' : 'idle'; icon = 'circle-filled'; color = COLOR.idle(); }
+    else { state = 'thinking'; icon = 'sync~spin'; color = COLOR.working(); }
+    const turn = !s.idle && !s.ended && s.turnStart ? ` · turn ${ago(now - s.turnStart)} · ${s.turnCalls} calls` : '';
     const last = s.recent[0];
-    const lastHint = last && !s.ended ? ` · ${last.tool} ${ago(Date.now() - last.end)} ago` : '';
-    return new Node(title, running ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
+    const lastHint = last && !s.ended && !turn ? ` · ${last.tool} ${ago(now - last.end)} ago` : '';
+    const tip = [s.cwd, `session ${s.id}`, `${s.kind} pid ${s.agentPid || '?'}`, meta && meta.name ? `name ${meta.name}` : '',
+      s.permissionMode ? `permissions ${s.permissionMode}` : '', s.effort ? `effort ${s.effort}` : '',
+      s.attention ? `\n${s.attention.msg}` : ''].filter(Boolean).join('\n');
+    return new Node(title, running || (s.attention && s.attention.level === 'blocked') ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
       kind: 'session', s,
-      description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}${lastHint}`,
-      tooltip: `${s.cwd}\nsession ${s.id}\n${s.kind} pid ${s.agentPid || '?'}`,
-      iconPath: new vscode.ThemeIcon(running ? 'sync~spin' : s.alive ? 'circle-filled' : 'circle-outline'),
+      description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}${turn}${lastHint}`,
+      tooltip: tip,
+      iconPath: new vscode.ThemeIcon(icon, color),
       contextValue: 'session',
+      command: { command: 'agentActivity.openSession', title: 'Open session', arguments: [s] },
+    });
+  }
+
+  callNode(r, now) {
+    const isBg = !!r.bg;
+    const icon = r.tool === 'Bash' ? 'terminal' : r.tool === 'Agent' ? 'hubot' : r.tool === 'Workflow' ? 'type-hierarchy' : r.tool === 'AskUserQuestion' ? 'question' : 'tools';
+    return new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
+      kind: 'leaf', ev: r,
+      description: `${r.tool}${isBg ? ' bg' + (r.pid ? ' pid ' + r.pid : '') : ''} ${ago(now - r.start)}`,
+      tooltip: `${r.tool}\n${r.summary}\nstarted ${new Date(r.start).toLocaleTimeString()}${r.command ? '\n\n' + r.command : ''}`,
+      iconPath: new vscode.ThemeIcon(icon, isBg ? COLOR.background() : COLOR.working()),
+      contextValue: 'tool',
+      command: { command: 'agentActivity.openItem', title: 'Open', arguments: [r] },
     });
   }
 
   sessionChildren(s) {
     const now = Date.now();
     const out = [];
+    // Direct calls (not made by a sub-agent, and not the Agent call that a sub-agent node already represents).
     for (const r of s.running.values()) {
-      out.push(new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
-        kind: 'leaf', ev: r,
-        description: `${r.tool}${r.bg ? ' bg' + (r.pid ? ' pid ' + r.pid : '') : ''}${r.agent_id ? ' agent' : ''} ${ago(now - r.start)}`,
-        tooltip: `${r.tool}\n${r.summary}\nstarted ${new Date(r.start).toLocaleTimeString()}${r.agent_id ? `\nsub-agent ${r.agent_type || ''} ${r.agent_id}` : ''}`,
-        iconPath: new vscode.ThemeIcon(r.tool === 'Bash' ? 'terminal' : r.tool === 'Agent' ? 'hubot' : r.tool === 'Workflow' ? 'type-hierarchy' : 'tools'),
-        contextValue: 'tool',
-      }));
+      if (r.agent_id || r.agentId) continue;
+      out.push(this.callNode(r, now));
     }
-    for (const a of s.agents.values()) {
-      out.push(new Node(`agent ${a.agent_type || a.summary || ''}`.trim(), vscode.TreeItemCollapsibleState.None, {
-        kind: 'leaf',
-        description: `sub-agent ${ago(now - a.start)}`,
-        tooltip: `agent ${a.agent_id || ''}\n${a.agent_type || ''}`,
-        iconPath: new vscode.ThemeIcon('hubot'),
+    for (const [id, a] of s.agents) {
+      const calls = [...s.running.values()].filter((r) => r.agent_id === id);
+      const label = a.task ? middleEllipsis(a.task.replace(/\s*\[[^\]]*\]$/, ''), 70) : `agent ${a.agent_type || ''}`.trim();
+      out.push(new Node(label, calls.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None, {
+        kind: 'group', items: calls.map((r) => this.callNode(r, now)),
+        description: `${a.agent_type || 'sub-agent'} ${ago(now - a.start)}${calls.length ? ' · ' + calls.length + ' running' : ''}`,
+        tooltip: `sub-agent ${a.agent_id || ''}\n${a.agent_type || ''}\n${a.task || ''}`,
+        iconPath: new vscode.ThemeIcon('hubot', COLOR.working()),
       }));
     }
     const root = s.agentPid ? this.procs.byPid.get(s.agentPid) : null;
@@ -506,18 +594,23 @@ class Provider {
     if (s.recent.length) {
       out.push(new Node('Recent', vscode.TreeItemCollapsibleState.Expanded, {
         kind: 'group',
-        items: s.recent.map((r) => new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
-          kind: 'leaf', ev: r,
-          description: `${r.tool}${r.background ? ' bg' : ''}${r.agent_id ? ' agent' : ''} ${ago(r.end - r.start)} · ${new Date(r.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-          tooltip: r.denied ? `PERMISSION DENIED\n${r.summary}` : r.error ? `FAILED\n${r.error}` : `${r.tool}\n${r.summary}`,
-          iconPath: new vscode.ThemeIcon(r.ok ? 'check' : r.denied ? 'circle-slash' : 'error', r.ok ? undefined : new vscode.ThemeColor(r.denied ? 'charts.yellow' : 'errorForeground')),
-          contextValue: 'tool',
-        })),
+        items: s.recent.map((r) => {
+          const status = r.denied ? 'denied' : !r.ok ? (r.exit_code != null ? `exit ${r.exit_code}` : r.interrupted ? 'interrupted' : 'failed') : '';
+          const tag = `${r.tool}${r.background ? ' bg' : ''}${r.agent_id ? ' agent' : ''}`;
+          return new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
+            kind: 'leaf', ev: r,
+            description: `${status ? status + ' · ' : ''}${tag} ${ago(r.end - r.start)} · ${new Date(r.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+            tooltip: r.denied ? `PERMISSION DENIED\n${r.summary}` : r.error ? `${r.tool} ${status}\n${r.summary}\n\n${r.error}` : `${r.tool}\n${r.summary}${r.command ? '\n\n' + r.command : ''}`,
+            iconPath: new vscode.ThemeIcon(r.ok ? 'check' : r.denied ? 'circle-slash' : 'error', r.ok ? COLOR.idle() : r.denied ? COLOR.denied() : COLOR.error()),
+            contextValue: 'tool',
+            command: { command: 'agentActivity.openItem', title: 'Open', arguments: [r] },
+          });
+        }),
         iconPath: new vscode.ThemeIcon('history'),
       }));
     }
     if (!out.length) {
-      out.push(new Node('nothing running', vscode.TreeItemCollapsibleState.None, { kind: 'leaf', iconPath: new vscode.ThemeIcon('check') }));
+      out.push(new Node('nothing running', vscode.TreeItemCollapsibleState.None, { kind: 'leaf', iconPath: new vscode.ThemeIcon('check', COLOR.idle()) }));
     }
     return out;
   }
@@ -532,9 +625,9 @@ class Provider {
     const label = rk ? `${rk}${/app-server/.test(p.command) ? ' app-server' : ''}` : call && call.summary && call.summary !== call.command ? call.summary : compactCommand(p.command);
     return new Node(label, kids.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None, {
       kind: 'process', p,
-      description: `${paused ? 'PAUSED · ' : ''}${rk ? 'pid ' + p.pid + ' · ' : ''}${call && call.bg ? 'bg · ' : ''}${leaf ? '→ ' + leaf + ' ' : ''}${shortEtime(p.etime)}`,
+      description: `${paused ? 'PAUSED · ' : ''}${rk ? 'pid ' + p.pid + ' · ' : ''}${call && call.bg ? 'bg · ' : ''}${leaf ? '→ ' + leaf + ' ' : ''}${cpuLabel(p)}${shortEtime(p.etime)}`,
       tooltip: `${cmd}\n\npid ${p.pid}  ppid ${p.ppid}  elapsed ${p.etime}`,
-      iconPath: new vscode.ThemeIcon(paused ? 'debug-pause' : isAgentRoot(p.command) ? 'circle-filled' : 'terminal', paused ? new vscode.ThemeColor('charts.yellow') : undefined),
+      iconPath: new vscode.ThemeIcon(paused ? 'debug-pause' : isAgentRoot(p.command) ? 'circle-filled' : 'terminal', paused ? COLOR.denied() : call && call.bg ? COLOR.background() : cpuOf(p) >= 1 ? COLOR.working() : COLOR.idle()),
       contextValue: rk ? 'agentProcess' : paused ? 'pausedProcess' : IS_WINDOWS ? 'processNoPause' : 'process',
     });
   }
@@ -556,10 +649,26 @@ function renderTree(provider) {
   return lines.join('\n') + '\n';
 }
 
+// ~/.claude/sessions/<pid>.json: name and busy/idle status as Claude Code itself sees them.
+function readSessionMeta() {
+  const out = new Map();
+  const dir = path.join(os.homedir(), '.claude', 'sessions');
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return out; }
+  for (const f of files) {
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (j && j.sessionId) out.set(j.sessionId, { name: j.name, status: j.status, pid: j.pid });
+    } catch { /* partial write, skip */ }
+  }
+  return out;
+}
+
 async function dumpMain() {
   const events = new EventState();
   events.loadInitial();
   const provider = new Provider(events);
+  provider.meta = readSessionMeta();
   provider.procs = await scanProcesses();
   events.reconcile(provider.procs, (r) => provider.procChildrenAll(r));
   process.stdout.write(renderTree(provider));
@@ -580,14 +689,16 @@ function activate(context) {
   context.subscriptions.push(status);
 
   function updateStatus() {
-    let cmds = 0, agents = 0, procs = 0;
+    let cmds = 0, agents = 0, procs = 0, blocked = 0;
     for (const s of provider.liveSessions()) {
       cmds += s.running.size; agents += s.agents.size;
+      if (s.attention && s.attention.level === 'blocked') blocked += 1;
       const root = s.agentPid ? provider.procs.byPid.get(s.agentPid) : null;
       if (root) procs += provider.procChildren(root).length;
     }
     const busy = cmds + agents + procs > 0;
-    status.text = busy ? `$(sync~spin) Agents: ${cmds} cmd · ${agents} agent · ${procs} proc` : '$(check) Agents: idle';
+    status.text = blocked ? `$(bell) Agents: ${blocked} need${blocked > 1 ? '' : 's'} you` : busy ? `$(sync~spin) Agents: ${cmds} cmd · ${agents} agent · ${procs} proc` : '$(check) Agents: idle';
+    status.backgroundColor = blocked ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
     status.tooltip = 'Agent Activity Monitor — click to open';
     status.show();
   }
@@ -596,6 +707,7 @@ function activate(context) {
   let lastText = '';
   async function tick() {
     events.readNew();
+    provider.meta = readSessionMeta();
     provider.procs = await scanProcesses();
     events.reconcile(provider.procs, (r) => provider.procChildrenAll(r));
     for (const pid of provider.paused) if (!provider.procs.byPid.has(pid)) provider.paused.delete(pid);
@@ -647,6 +759,27 @@ function activate(context) {
       if (ok !== 'Kill') return;
       try { process.kill(node.p.pid, 'SIGTERM'); } catch (e) { vscode.window.showErrorMessage(`kill failed: ${e.message}`); }
       setTimeout(tick, 500);
+    }),
+    vscode.commands.registerCommand('agentActivity.openSession', async (s) => {
+      if (!s) return;
+      // Claude Code: its editor.open command takes a session id and focuses an already-open panel for it.
+      const attempts = s.kind === 'codex'
+        ? [['chatgpt.openSidebar']]
+        : [['claude-vscode.editor.open', s.id], ['claude-vscode.editor.openLast'], ['claude-vscode.focus']];
+      for (const [cmd, ...args] of attempts) {
+        try { await vscode.commands.executeCommand(cmd, ...args); return; } catch { /* try the next one */ }
+      }
+      vscode.window.showInformationMessage(`Session ${s.id.slice(0, 8)} in ${s.cwd}`);
+    }),
+    vscode.commands.registerCommand('agentActivity.openItem', async (r) => {
+      if (!r) return;
+      const sum = r.summary || '';
+      if (['Read', 'Edit', 'Write', 'NotebookEdit'].includes(r.tool) && /^([A-Za-z]:)?[\/\\]/.test(sum)) {
+        try { await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(sum)); } catch (e) { vscode.window.showWarningMessage(`Cannot open ${sum}: ${e.message}`); }
+        return;
+      }
+      const text = r.command || sum;
+      if (text) { await vscode.env.clipboard.writeText(text); vscode.window.setStatusBarMessage('$(clippy) command copied', 2000); }
     }),
     vscode.commands.registerCommand('agentActivity.pause', (node) => {
       if (!node || !node.p) return;

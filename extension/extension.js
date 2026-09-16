@@ -268,7 +268,7 @@ function cleanCommand(command) {
 }
 
 // Shorten a command for display: drop env exports, keep only basenames of paths, trim.
-function compactCommand(command, max = 70) {
+function compactCommand(command, max = 160) {
   let c = cleanCommand(command);
   c = c.replace(/^(export\s+[^;]*;\s*)+/, '');
   c = c.replace(/^([A-Za-z_][A-Za-z0-9_]*=\S+;?\s*)+/, '');
@@ -435,6 +435,7 @@ class Provider {
     this.procs = { roots: [], byPid: new Map(), available: true };
     this.hidden = new Set(); // session ids hidden by the user (until the extension restarts)
     this.meta = new Map(); // session id -> {name, status} from ~/.claude/sessions/*.json
+    this.mediaDir = null; // set by activate(); custom SVG icons live there
     this.paused = new Set(); // pids we sent SIGSTOP to
     this._em = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._em.event;
@@ -542,7 +543,7 @@ class Provider {
   sessionNode(s) {
     const running = s.running.size + s.agents.size;
     const meta = this.meta.get(s.id);
-    const title = s.title ? middleEllipsis(s.title, 70) : meta && meta.name ? meta.name : `session ${s.id.slice(0, 6)}`;
+    const title = s.title ? middleEllipsis(s.title, 200) : meta && meta.name ? meta.name : `session ${s.id.slice(0, 6)}`;
     const now = Date.now();
     let state, icon, color;
     if (s.attention && s.attention.level === 'blocked') { state = `needs you: ${s.attention.msg}`; icon = 'bell'; color = COLOR.attention(); }
@@ -550,7 +551,7 @@ class Provider {
     else if (!s.alive) { state = 'no process'; icon = 'circle-outline'; color = COLOR.idle(); }
     else if (s.compacting) { state = 'compacting context'; icon = 'fold'; color = COLOR.working(); }
     else if (running) { state = `${running} running`; icon = 'sync~spin'; color = COLOR.working(); }
-    else if (s.idle || (meta && meta.status === 'idle')) { state = s.attention ? 'waiting for you' : 'idle'; icon = 'circle-filled'; color = COLOR.idle(); }
+    else if (s.idle || (meta && meta.status === 'idle')) { state = s.attention ? 'waiting for you' : 'idle'; icon = 'zzz'; color = COLOR.idle(); }
     else { state = 'thinking'; icon = 'sync~spin'; color = COLOR.working(); }
     const turn = !s.idle && !s.ended && s.turnStart ? ` · turn ${ago(now - s.turnStart)} · ${s.turnCalls} calls` : '';
     const last = s.recent[0];
@@ -562,7 +563,9 @@ class Provider {
       kind: 'session', s, id: `session:${s.id}`,
       description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}${turn}${lastHint}`,
       tooltip: tip,
-      iconPath: new vscode.ThemeIcon(icon, color),
+      iconPath: icon === 'zzz' && this.mediaDir
+        ? { light: vscode.Uri.file(path.join(this.mediaDir, 'zzz-light.svg')), dark: vscode.Uri.file(path.join(this.mediaDir, 'zzz-dark.svg')) }
+        : new vscode.ThemeIcon(icon === 'zzz' ? 'circle-outline' : icon, color),
       contextValue: 'session',
       command: { command: 'agentActivity.openSession', title: 'Open session', arguments: [s] },
     });
@@ -592,7 +595,7 @@ class Provider {
     }
     for (const [id, a] of s.agents) {
       const calls = [...s.running.values()].filter((r) => r.agent_id === id);
-      const label = a.task ? middleEllipsis(a.task.replace(/\s*\[[^\]]*\]$/, ''), 70) : `agent ${a.agent_type || ''}`.trim();
+      const label = a.task ? middleEllipsis(a.task.replace(/\s*\[[^\]]*\]$/, ''), 160) : `agent ${a.agent_type || ''}`.trim();
       out.push(new Node(label, calls.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None, {
         kind: 'group', id: `${base}/agent:${id}`, items: calls.map((r) => this.callNode(r, now, `${base}/agent:${id}`)),
         description: `${a.agent_type || 'sub-agent'} ${ago(now - a.start)}${calls.length ? ' · ' + calls.length + ' running' : ''}`,
@@ -699,6 +702,7 @@ function activate(context) {
   const events = new EventState();
   events.loadInitial();
   const provider = new Provider(events);
+  provider.mediaDir = path.join(context.extensionPath, 'media');
   const tree = vscode.window.createTreeView('agentActivity.tree', { treeDataProvider: provider, showCollapseAll: true });
   context.subscriptions.push(tree);
 

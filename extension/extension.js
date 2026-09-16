@@ -116,6 +116,11 @@ class EventState {
         const started = key ? s.running.get(key) : null;
         if (s.attention && s.attention.level === 'blocked' && (!started || started.tool !== 'Agent')) s.attention = null;
         const bg = !!(ev.background || (started && started.background));
+        if (bg && started && ev.event === 'PostToolUse' && ev.tool === 'Agent' && !started.agentId) {
+          // Background Agent call: its sub-agent starts after this; keep the description for pairing.
+          s.pendingAgents = (s.pendingAgents || []).filter((c) => t - c.start < 10 * 60 * 1000);
+          s.pendingAgents.push(started);
+        }
         if (bg && started && ev.event === 'PostToolUse' && ev.tool !== 'Agent') {
           // Launched in the background: keep it "running" until its process disappears (see reconcile()).
           started.bg = true;
@@ -134,6 +139,7 @@ class EventState {
         // Pair with the oldest running Agent call that has no sub-agent yet: that call's description names the task.
         let call = null;
         for (const r of s.running.values()) if (r.tool === 'Agent' && !r.agentId) { call = r; break; }
+        if (!call && s.pendingAgents && s.pendingAgents.length) call = s.pendingAgents.shift();
         const id = ev.agent_id || `agent-${t}`;
         if (call) call.agentId = id;
         s.agents.set(id, { ...ev, start: t, task: call ? call.summary : null });
@@ -155,11 +161,13 @@ class EventState {
     for (const s of this.sessions.values()) {
       const root = s.agentPid ? procs.byPid.get(s.agentPid) : null;
       const live = root ? procChildrenAll(root) : [];
-      for (const [k, r] of s.running) {
-        if (!r.bg) continue;
+      const claimed = new Set();
+      // Oldest first, so an older call keeps its process when a newer one has the same command text.
+      const bgCalls = [...s.running].filter(([, r]) => r.bg).sort((x, y) => x[1].start - y[1].start);
+      for (const [k, r] of bgCalls) {
         if (now - r.launched < 4000) continue; // give the process time to show up in ps
-        const p = matchProcess(r, live);
-        if (p) { r.pid = p.pid; continue; }
+        const p = matchProcess(r, live, claimed);
+        if (p) { r.pid = p.pid; claimed.add(p.pid); continue; }
         s.running.delete(k);
         s.recent.unshift({ ...r, end: now, ok: true });
         if (s.recent.length > cfg().get('recentCount', 8)) s.recent.length = cfg().get('recentCount', 8);
@@ -218,15 +226,21 @@ class EventState {
 function normCmd(c) { return (c || '').replace(/\\012/g, ' ').replace(/\s+/g, ' ').trim(); }
 
 // Does this logged call correspond to this process? Compare the agent's command with the eval'd part of the wrapper.
-function sameCommand(call, proc) {
+function sameCommand(call, proc, exact = false) {
   if (!call.command) return false;
   const a = normCmd(call.command);
   const b = cleanCommand(proc.command);
   if (!a || !b) return false;
-  return a === b || (a.length > 60 && b.startsWith(a.slice(0, 60))) || (b.length > 60 && a.startsWith(b.slice(0, 60)));
+  if (a === b) return true;
+  if (exact) return false;
+  // ps may truncate very long commands: accept a long common prefix.
+  const n = 120;
+  return (a.length > n && b.startsWith(a.slice(0, n))) || (b.length > n && a.startsWith(b.slice(0, n)));
 }
-function matchProcess(call, procs) {
-  return procs.find((p) => sameCommand(call, p)) || null;
+function matchProcess(call, procs, claimed = new Set()) {
+  return procs.find((p) => !claimed.has(p.pid) && sameCommand(call, p, true))
+    || procs.find((p) => !claimed.has(p.pid) && sameCommand(call, p))
+    || null;
 }
 // Which agent owns this process, if it is an agent root: 'claude', 'codex' or null.
 function rootKind(command) {

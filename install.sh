@@ -4,6 +4,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HOOK="$HERE/hooks/log-event.sh"
+# Shown by the agent whenever it lists a hook (errors, compaction summary): say what this is and where it comes from.
+NOTE="  # Agent Activity Monitor: records this event for the VS Code activity view (github.com/jonx/agent-activity-monitor)"
 chmod +x "$HOOK"
 command -v jq >/dev/null || { echo "jq is required (brew install jq)"; exit 1; }
 
@@ -15,9 +17,9 @@ mkdir -p "$HOME/.claude"
 [ -f "$CLAUDE" ] || echo '{}' > "$CLAUDE"
 cp "$CLAUDE" "$CLAUDE.bak"
 tmp=$(mktemp)
-jq --arg hook "$HOOK" --arg events "$EVENTS" '
-  def entry($ev): {hooks: [{type: "command", command: ($hook + " " + $ev), async: true, timeout: 10}]};
-  def has($list; $ev): any($list[]?; .hooks[]?.command | tostring | test("log-event\\.sh " + $ev + "$"));
+jq --arg hook "$HOOK" --arg events "$EVENTS" --arg note "$NOTE" '
+  def entry($ev): {hooks: [{type: "command", command: ($hook + " " + $ev + $note), async: true, timeout: 10}]};
+  def has($list; $ev): any($list[]?; .hooks[]?.command | tostring | test("log-event\\.sh " + $ev + "( |$)"));
   reduce ($events | split(" "))[] as $ev (.;
     .hooks[$ev] = (if has((.hooks[$ev] // []); $ev) then .hooks[$ev] else ((.hooks[$ev] // []) + [entry($ev)]) end))
 ' "$CLAUDE" > "$tmp" && mv "$tmp" "$CLAUDE"
@@ -28,9 +30,9 @@ if [ -d "$HOME/.codex" ]; then
   CODEX="$HOME/.codex/hooks.json"
   [ -f "$CODEX" ] || echo '{}' > "$CODEX"
   cp "$CODEX" "$CODEX.bak"
-  jq --arg hook "$HOOK" --arg events "$EVENTS" '
-    def entry($ev): {hooks: [{type: "command", command: ($hook + " " + $ev + " codex"), timeout: 10}]};
-    def has($list; $ev): any($list[]?; .hooks[]?.command | tostring | test("log-event\\.sh " + $ev + " codex$"));
+  jq --arg hook "$HOOK" --arg events "$EVENTS" --arg note "$NOTE" '
+    def entry($ev): {hooks: [{type: "command", command: ($hook + " " + $ev + " codex" + $note), timeout: 10}]};
+    def has($list; $ev): any($list[]?; .hooks[]?.command | tostring | test("log-event\\.sh " + $ev + " codex( |$)"));
     reduce ($events | split(" ") | map(select(. != "PostToolUseFailure" and . != "PermissionDenied" and . != "Notification")))[] as $ev (.;
       .hooks[$ev] = (if has((.hooks[$ev] // []); $ev) then .hooks[$ev] else ((.hooks[$ev] // []) + [entry($ev)]) end))
   ' "$CODEX" > "$tmp" && mv "$tmp" "$CODEX"

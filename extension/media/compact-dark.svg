@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- context being compacted: a frame that shrinks toward its centre, then snaps back -->
+  <rect fill="none" stroke="#8ab4f8" stroke-width="1.4" rx="1.5" x="2" y="2" width="12" height="12">
+    <animate attributeName="x" values="2;5.5;5.5;2" keyTimes="0;0.6;0.85;1" dur="1.6s" repeatCount="indefinite"/>
+    <animate attributeName="y" values="2;5.5;5.5;2" keyTimes="0;0.6;0.85;1" dur="1.6s" repeatCount="indefinite"/>
+    <animate attributeName="width" values="12;5;5;12" keyTimes="0;0.6;0.85;1" dur="1.6s" repeatCount="indefinite"/>
+    <animate attributeName="height" values="12;5;5;12" keyTimes="0;0.6;0.85;1" dur="1.6s" repeatCount="indefinite"/>
+  </rect>
+  <rect fill="#8ab4f8" x="7" y="7" width="2" height="2" rx="0.5" opacity="0.9"/>
+</svg>

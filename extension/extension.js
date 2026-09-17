@@ -540,6 +540,12 @@ class Provider {
     return nodes;
   }
 
+  // Custom SVG icons (media/<name>-light.svg, media/<name>-dark.svg); null when not one of ours or outside VS Code.
+  svgIcon(name) {
+    if (!this.mediaDir || !['zzz', 'compact'].includes(name)) return null;
+    return { light: vscode.Uri.file(path.join(this.mediaDir, `${name}-light.svg`)), dark: vscode.Uri.file(path.join(this.mediaDir, `${name}-dark.svg`)) };
+  }
+
   sessionNode(s) {
     const running = s.running.size + s.agents.size;
     const meta = this.meta.get(s.id);
@@ -549,7 +555,7 @@ class Provider {
     if (s.attention && s.attention.level === 'blocked') { state = `needs you: ${s.attention.msg}`; icon = 'bell'; color = COLOR.attention(); }
     else if (s.ended) { state = 'ended'; icon = 'circle-outline'; color = COLOR.idle(); }
     else if (!s.alive) { state = 'no process'; icon = 'circle-outline'; color = COLOR.idle(); }
-    else if (s.compacting) { state = 'compacting context'; icon = 'fold'; color = COLOR.working(); }
+    else if (s.compacting) { state = 'compacting context'; icon = 'compact'; color = COLOR.working(); }
     else if (running) { state = `${running} running`; icon = 'sync~spin'; color = COLOR.working(); }
     else if (s.idle || (meta && meta.status === 'idle')) { state = s.attention ? 'waiting for you' : 'idle'; icon = 'zzz'; color = COLOR.idle(); }
     else { state = 'thinking'; icon = 'sync~spin'; color = COLOR.working(); }
@@ -563,9 +569,7 @@ class Provider {
       kind: 'session', s, id: `session:${s.id}`,
       description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}${turn}${lastHint}`,
       tooltip: tip,
-      iconPath: icon === 'zzz' && this.mediaDir
-        ? { light: vscode.Uri.file(path.join(this.mediaDir, 'zzz-light.svg')), dark: vscode.Uri.file(path.join(this.mediaDir, 'zzz-dark.svg')) }
-        : new vscode.ThemeIcon(icon === 'zzz' ? 'circle-outline' : icon, color),
+      iconPath: this.svgIcon(icon) || new vscode.ThemeIcon({ zzz: 'circle-outline', compact: 'fold' }[icon] || icon, color),
       contextValue: 'session',
       command: { command: 'agentActivity.openSession', title: 'Open session', arguments: [s] },
     });

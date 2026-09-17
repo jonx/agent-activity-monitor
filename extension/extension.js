@@ -280,6 +280,15 @@ function compactCommand(command, max = 160) {
   return middleEllipsis(c, max);
 }
 
+// Labels are cut in the middle to a character budget, because VS Code only ever clips at the end and an
+// extension cannot know the panel width. `agentActivity.labelChars` is that budget at the top level;
+// each indentation level costs about two characters. 0 disables it (VS Code clips at the end).
+function fit(text, depth = 0) {
+  const budget = cfg().get('labelChars', 42);
+  if (!budget) return text;
+  return middleEllipsis(text, Math.max(16, budget - 2 * depth));
+}
+
 // "cargo test --offline -p afsplus-check …matrix_clone --nocapture": keep both ends, cut the middle.
 function middleEllipsis(text, max) {
   if (text.length <= max) return text;
@@ -565,7 +574,7 @@ class Provider {
     const tip = [s.cwd, `session ${s.id}`, `${s.kind} pid ${s.agentPid || '?'}`, meta && meta.name ? `name ${meta.name}` : '',
       s.permissionMode ? `permissions ${s.permissionMode}` : '', s.effort ? `effort ${s.effort}` : '',
       s.attention ? `\n${s.attention.msg}` : ''].filter(Boolean).join('\n');
-    return new Node(title, running || (s.attention && s.attention.level === 'blocked') ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
+    return new Node(fit(title, 1), running || (s.attention && s.attention.level === 'blocked') ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
       kind: 'session', s, id: `session:${s.id}`,
       description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}${turn}${lastHint}`,
       tooltip: tip,
@@ -578,7 +587,7 @@ class Provider {
   callNode(r, now, base) {
     const isBg = !!r.bg;
     const icon = r.tool === 'Bash' ? 'terminal' : r.tool === 'Agent' ? 'hubot' : r.tool === 'Workflow' ? 'type-hierarchy' : r.tool === 'AskUserQuestion' ? 'question' : 'tools';
-    return new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
+    return new Node(fit(shortSummary(r), base.includes('/agent:') ? 3 : 2), vscode.TreeItemCollapsibleState.None, {
       kind: 'leaf', ev: r, id: `${base}/call:${r.key || r.tool_use_id || r.start}`,
       description: `${r.tool}${isBg ? ' bg' + (r.pid ? ' pid ' + r.pid : '') : ''} ${ago(now - r.start)}`,
       tooltip: `${r.tool}\n${r.summary}\nstarted ${new Date(r.start).toLocaleTimeString()}${r.command ? '\n\n' + r.command : ''}`,
@@ -600,7 +609,7 @@ class Provider {
     for (const [id, a] of s.agents) {
       const calls = [...s.running.values()].filter((r) => r.agent_id === id);
       const label = a.task ? middleEllipsis(a.task.replace(/\s*\[[^\]]*\]$/, ''), 160) : `agent ${a.agent_type || ''}`.trim();
-      out.push(new Node(label, calls.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None, {
+      out.push(new Node(fit(label, 2), calls.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None, {
         kind: 'group', id: `${base}/agent:${id}`, items: calls.map((r) => this.callNode(r, now, `${base}/agent:${id}`)),
         description: `${a.agent_type || 'sub-agent'} ${ago(now - a.start)}${calls.length ? ' · ' + calls.length + ' running' : ''}`,
         tooltip: `sub-agent ${a.agent_id || ''}\n${a.agent_type || ''}\n${a.task || ''}`,
@@ -622,7 +631,7 @@ class Provider {
         items: s.recent.map((r) => {
           const status = r.denied ? 'denied' : !r.ok ? (r.exit_code != null ? `exit ${r.exit_code}` : r.interrupted ? 'interrupted' : 'failed') : '';
           const tag = `${r.tool}${r.background ? ' bg' : ''}${r.agent_id ? ' agent' : ''}`;
-          return new Node(shortSummary(r), vscode.TreeItemCollapsibleState.None, {
+          return new Node(fit(shortSummary(r), 3), vscode.TreeItemCollapsibleState.None, {
             kind: 'leaf', ev: r, id: `${base}/recent:${r.tool_use_id || r.end}`,
             description: `${status ? status + ' · ' : ''}${tag} ${ago(r.end - r.start)} · ${new Date(r.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
             tooltip: r.denied ? `PERMISSION DENIED\n${r.summary}` : r.error ? `${r.tool} ${status}\n${r.summary}\n\n${r.error}` : `${r.tool}\n${r.summary}${r.command ? '\n\n' + r.command : ''}`,
@@ -648,7 +657,8 @@ class Provider {
     const paused = this.paused.has(p.pid);
     const call = rk ? null : this.callFor(p);
     const label = rk ? `${rk}${/app-server/.test(p.command) ? ' app-server' : ''}` : call && call.summary && call.summary !== call.command ? call.summary : compactCommand(p.command);
-    return new Node(label, kids.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None, {
+    const depth = 3 + (base.match(/\/pid:/g) || []).length;
+    return new Node(fit(label, depth), kids.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None, {
       kind: 'process', p, id: `${base}/pid:${p.pid}`,
       description: `${paused ? 'PAUSED · ' : ''}${rk ? 'pid ' + p.pid + ' · ' : ''}${call && call.bg ? 'bg · ' : ''}${leaf ? '→ ' + leaf + ' ' : ''}${cpuLabel(p)}${shortEtime(p.etime)}`,
       tooltip: `${cmd}\n\npid ${p.pid}  ppid ${p.ppid}  elapsed ${p.etime}`,

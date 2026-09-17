@@ -2,7 +2,7 @@
   "name": "agent-activity-monitor",
   "displayName": "Agent Activity Monitor",
   "description": "See what Claude Code and Codex are running right now: commands, background jobs, sub-agents and processes, per session and per project.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "Jkn",
   "author": {
     "name": "John Knipper",
@@ -177,6 +177,11 @@
           "type": "number",
           "default": 15,
           "description": "Hide sessions with no live process and no event for this many minutes."
+        },
+        "agentActivity.labelChars": {
+          "type": "number",
+          "default": 42,
+          "description": "Label width in characters at the top level; longer labels are cut in the middle, and each tree level costs about two characters. Tune it to your panel width. 0 = no cutting (VS Code clips at the end)."
         }
       }
     },

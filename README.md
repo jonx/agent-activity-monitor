@@ -89,6 +89,7 @@ tail -f ~/.agent-activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // "")
 
 | Setting | Default | Meaning |
 |---|---|---|
+| `agentActivity.labelChars` | 42 | label width; longer labels are cut in the middle. Tune to your panel width, 0 disables |
 | `agentActivity.pollIntervalMs` | 2000 | process scan interval |
 | `agentActivity.recentCount` | 8 | finished calls kept per session |
 | `agentActivity.staleMinutes` | 15 | hide sessions with no live process after this |

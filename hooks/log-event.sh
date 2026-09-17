@@ -63,4 +63,6 @@ jq -c \
       else "" end),
     error: (if $ev == "PermissionDenied" then "permission denied" elif $ev == "PostToolUseFailure" then (.error // .tool_response // "failed" | tostring | .[-400:]) else null end)
   }' >> "$LOG" 2>/dev/null
+# Claude Code lists compaction hooks in its "Compacted" summary; ask it not to show ours.
+case "$EVENT" in PreCompact|PostCompact) printf '{"suppressOutput":true}\n' ;; esac
 exit 0

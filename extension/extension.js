@@ -74,6 +74,7 @@ class EventState {
         s.agents.clear();
         break;
       case 'Stop':
+      case 'Interrupt': // Codex: the user interrupted the turn
         s.idle = true;
         s.compacting = false;
         if (s.attention && s.attention.level !== 'idle') s.attention = null;
@@ -85,6 +86,10 @@ class EventState {
         break;
       case 'PostCompact':
         s.compacting = false;
+        break;
+      case 'PermissionRequest':
+        // Codex: fires just before the approval prompt. Answered once the call finishes or the next one starts.
+        s.attention = { level: 'blocked', msg: `permission: ${ev.summary || ev.tool || 'tool call'}`, t, permission: true };
         break;
       case 'Notification': {
         // permission_prompt / elicitation_dialog: the agent is blocked on you. idle_prompt: it finished and waits.
@@ -98,7 +103,7 @@ class EventState {
         s.ended = false;
         s.compacting = false;
         s.turnCalls += 1;
-        if (s.attention && s.attention.level === 'idle') s.attention = null;
+        if (s.attention && (s.attention.level === 'idle' || s.attention.permission)) s.attention = null;
         const key = ev.tool_use_id || `${ev.tool}-${t}`;
         s.running.set(key, { ...ev, start: t, key });
         if (ev.tool === 'AskUserQuestion') s.attention = { level: 'blocked', msg: 'asks you a question', t };
@@ -272,7 +277,7 @@ function compactCommand(command, max = 160) {
   let c = cleanCommand(command);
   c = c.replace(/^(export\s+[^;]*;\s*)+/, '');
   c = c.replace(/^([A-Za-z_][A-Za-z0-9_]*=\S+;?\s*)+/, '');
-  c = c.replace(/(?:\/[\w.@+%~-]+){2,}/g, (m) => m.split('/').pop());
+  c = c.replace(/~?(?:\/[\w.@+%~-]+){2,}/g, (m) => m.split('/').pop());
   c = c.replace(/(?:[A-Za-z]:)?(?:\\[\w.@+%~ -]+){2,}/g, (m) => m.split('\\').pop()); // Windows paths
   c = c.replace(/2>&1|< \/dev\/null|>\s*\S+/g, '').replace(/\s+/g, ' ').trim();
   c = c.replace(/^(\/bin\/|\/usr\/bin\/)/, '');
@@ -406,9 +411,15 @@ function ago(ms) {
   return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
 }
 
-// File tools: show only the file name; everything else: as logged.
+// A call whose summary is the agent's own description, not just the start of its command.
+function isDescribed(ev) {
+  return !!ev.summary && !(ev.command && normCmd(ev.command).startsWith(normCmd(ev.summary)));
+}
+
+// File tools: show only the file name; undescribed commands: compacted; everything else: as logged.
 function shortSummary(ev) {
   const sum = ev.summary || '';
+  if (ev.command && !isDescribed(ev)) return compactCommand(ev.command);
   if (['Read', 'Edit', 'Write', 'NotebookEdit', 'Glob', 'Grep'].includes(ev.tool) && sum.startsWith('/')) return sum.split('/').pop();
   return sum || ev.tool || '';
 }
@@ -421,7 +432,12 @@ const COLOR = {
   denied: () => new vscode.ThemeColor('agentActivity.denied'),
   idle: () => new vscode.ThemeColor('agentActivity.idle'),
   background: () => new vscode.ThemeColor('agentActivity.background'),
+  claude: () => new vscode.ThemeColor('agentActivity.claude'),
+  codex: () => new vscode.ThemeColor('agentActivity.codex'),
 };
+// A live session's icon takes its agent's color; the icon's shape says what the session is doing.
+const AGENTS = ['claude', 'codex'];
+function agentColor(kind) { return (AGENTS.includes(kind) ? COLOR[kind] : COLOR.working)(); }
 
 function currentWorkspaceRoots() {
   const folders = (vscode.workspace && vscode.workspace.workspaceFolders) || [];
@@ -550,35 +566,43 @@ class Provider {
   }
 
   // Custom SVG icons (media/<name>-light.svg, media/<name>-dark.svg); null when not one of ours or outside VS Code.
-  svgIcon(name) {
+  svgIcon(name, kind) {
     if (!this.mediaDir || !['zzz', 'compact'].includes(name)) return null;
-    return { light: vscode.Uri.file(path.join(this.mediaDir, `${name}-light.svg`)), dark: vscode.Uri.file(path.join(this.mediaDir, `${name}-dark.svg`)) };
+    const base = AGENTS.includes(kind) ? `${name}-${kind}` : name;
+    return { light: vscode.Uri.file(path.join(this.mediaDir, `${base}-light.svg`)), dark: vscode.Uri.file(path.join(this.mediaDir, `${base}-dark.svg`)) };
   }
 
   sessionNode(s) {
     const running = s.running.size + s.agents.size;
     const meta = this.meta.get(s.id);
-    const title = s.title ? middleEllipsis(s.title, 200) : meta && meta.name ? meta.name : `session ${s.id.slice(0, 6)}`;
+    // Claude Code names a session "<project>-<xx>"; under the project node the project part is noise.
+    const dir = path.basename(s.cwd || '');
+    const name = meta && meta.name ? (dir && meta.name.startsWith(dir + '-') ? `session ${meta.name.slice(dir.length + 1)}` : meta.name) : '';
+    // Codex threads carry a name the user sees in the chat panel: show it instead of the last prompt.
+    const title = s.kind === 'codex' && name ? name : s.title ? middleEllipsis(s.title, 200) : name || `session ${s.id.slice(0, 6)}`;
     const now = Date.now();
     let state, icon, color;
     if (s.attention && s.attention.level === 'blocked') { state = `needs you: ${s.attention.msg}`; icon = 'bell'; color = COLOR.attention(); }
     else if (s.ended) { state = 'ended'; icon = 'circle-outline'; color = COLOR.idle(); }
     else if (!s.alive) { state = 'no process'; icon = 'circle-outline'; color = COLOR.idle(); }
-    else if (s.compacting) { state = 'compacting context'; icon = 'compact'; color = COLOR.working(); }
-    else if (running) { state = `${running} running`; icon = 'sync~spin'; color = COLOR.working(); }
-    else if (s.idle || (meta && meta.status === 'idle')) { state = s.attention ? 'waiting for you' : 'idle'; icon = 'zzz'; color = COLOR.idle(); }
-    else { state = 'thinking'; icon = 'sync~spin'; color = COLOR.working(); }
+    else if (s.compacting) { state = 'compacting context'; icon = 'compact'; color = agentColor(s.kind); }
+    else if (running) { state = `${running} running`; icon = 'sync~spin'; color = agentColor(s.kind); }
+    else if (s.idle || (meta && meta.status === 'idle')) { state = s.attention ? 'waiting for you' : 'idle'; icon = 'zzz'; color = agentColor(s.kind); }
+    else { state = 'thinking'; icon = 'sync~spin'; color = agentColor(s.kind); }
     const turn = !s.idle && !s.ended && s.turnStart ? ` · turn ${ago(now - s.turnStart)} · ${s.turnCalls} calls` : '';
     const last = s.recent[0];
     const lastHint = last && !s.ended && !turn ? ` · ${last.tool} ${ago(now - last.end)} ago` : '';
-    const tip = [s.cwd, `session ${s.id}`, `${s.kind} pid ${s.agentPid || '?'}`, meta && meta.name ? `name ${meta.name}` : '',
+    const tip = [s.cwd, s.kind === 'codex' && s.title ? `last prompt: ${middleEllipsis(s.title, 200)}` : '', `session ${s.id}`, `${s.kind} pid ${s.agentPid || '?'}`, meta && meta.name ? `name ${meta.name}` : '',
       s.permissionMode ? `permissions ${s.permissionMode}` : '', s.effort ? `effort ${s.effort}` : '',
       s.attention ? `\n${s.attention.msg}` : ''].filter(Boolean).join('\n');
-    return new Node(fit(title, 1), running || (s.attention && s.attention.level === 'blocked') ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
+    // Nothing to show under it: no arrow, no "nothing running" line.
+    const root = s.agentPid ? this.procs.byPid.get(s.agentPid) : null;
+    const empty = !running && !s.recent.length && !(root && this.procChildren(root).length);
+    return new Node(fit(title, 1), empty ? vscode.TreeItemCollapsibleState.None : running || (s.attention && s.attention.level === 'blocked') ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed, {
       kind: 'session', s, id: `session:${s.id}`,
-      description: `${s.kind === 'codex' ? 'codex · ' : ''}${state}${turn}${lastHint}`,
+      description: `${state}${turn}${lastHint}`,
       tooltip: tip,
-      iconPath: this.svgIcon(icon) || new vscode.ThemeIcon({ zzz: 'circle-outline', compact: 'fold' }[icon] || icon, color),
+      iconPath: this.svgIcon(icon, s.kind) || new vscode.ThemeIcon({ zzz: 'circle-outline', compact: 'fold' }[icon] || icon, color),
       contextValue: 'session',
       command: { command: 'agentActivity.openSession', title: 'Open session', arguments: [s] },
     });
@@ -626,7 +650,7 @@ class Provider {
       }));
     }
     if (s.recent.length) {
-      out.push(new Node('Recent', vscode.TreeItemCollapsibleState.Expanded, {
+      out.push(new Node('Recent', vscode.TreeItemCollapsibleState.Collapsed, {
         kind: 'group', id: `${base}/recent`,
         items: s.recent.map((r) => {
           const status = r.denied ? 'denied' : !r.ok ? (r.exit_code != null ? `exit ${r.exit_code}` : r.interrupted ? 'interrupted' : 'failed') : '';
@@ -656,7 +680,7 @@ class Provider {
     const rk = rootKind(p.command);
     const paused = this.paused.has(p.pid);
     const call = rk ? null : this.callFor(p);
-    const label = rk ? `${rk}${/app-server/.test(p.command) ? ' app-server' : ''}` : call && call.summary && call.summary !== call.command ? call.summary : compactCommand(p.command);
+    const label = rk ? `${rk}${/app-server/.test(p.command) ? ' app-server' : ''}` : call && isDescribed(call) ? call.summary : compactCommand(p.command);
     const depth = 3 + (base.match(/\/pid:/g) || []).length;
     return new Node(fit(label, depth), kids.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None, {
       kind: 'process', p, id: `${base}/pid:${p.pid}`,
@@ -696,6 +720,13 @@ function readSessionMeta() {
       if (j && j.sessionId) out.set(j.sessionId, { name: j.name, status: j.status, pid: j.pid });
     } catch { /* partial write, skip */ }
   }
+  // Codex: ~/.codex/session_index.jsonl holds one line per thread rename; the last one wins.
+  try {
+    for (const line of fs.readFileSync(path.join(os.homedir(), '.codex', 'session_index.jsonl'), 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      try { const j = JSON.parse(line); if (j.id && j.thread_name) out.set(j.id, { name: j.thread_name }); } catch { /* skip malformed line */ }
+    }
+  } catch { /* no Codex here */ }
   return out;
 }
 

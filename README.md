@@ -75,8 +75,12 @@ code --install-extension ../agent-activity-monitor.vsix
 
 Do not combine the symlink and the VSIX: remove the symlink first.
 
-Codex (0.154+) asks you to trust the hooks the first time; until then only Codex
-processes are visible, not its tool calls.
+Codex (0.154+) does not run a hook until you have trusted it, and the VS Code
+extension never asks: until then only Codex processes are visible, not its
+sessions or tool calls. Start the Codex TUI once, run `/hooks` and trust the
+entries; repeat after an `install.sh` run that changes them. On Codex the
+installer also registers `PermissionRequest` (a session waiting for your
+approval shows as "needs you") and `Interrupt`.
 
 ## Command line
 
@@ -95,6 +99,16 @@ tail -f ~/.agent-activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // "")
 | `agentActivity.staleMinutes` | 15 | hide sessions with no live process after this |
 | `agentActivity.logPath` | `~/.agent-activity/events.jsonl` | event log location |
 
+## Tested versions
+
+| Agent | Tested with | Notes |
+|---|---|---|
+| Claude Code | CLI 2.1.195, VS Code extension 2.1.284 and 2.1.289 | all hook events listed above |
+| Codex | 0.155 and 0.160, as bundled in the ChatGPT VS Code extension (26.917, 26.930) | hooks must be trusted first; no `PostToolUseFailure`, `PermissionDenied` or `Notification` events, so failed and refused calls are not marked |
+
+Other versions may work: the hooks only rely on the documented hook input
+fields. Codex before 0.154 has no hook trust step and has not been tested.
+
 ## Platforms
 
 - **macOS**: developed and tested here.
@@ -107,9 +121,13 @@ tail -f ~/.agent-activity/events.jsonl | jq -r '"\(.ts) \(.event) \(.tool // "")
 
 ## Colors
 
-Six theme colors, pastel by default, overridable in `workbench.colorCustomizations`:
+Theme colors, pastel by default, overridable in `workbench.colorCustomizations`:
 `agentActivity.working`, `agentActivity.attention`, `agentActivity.error`,
 `agentActivity.denied`, `agentActivity.idle`, `agentActivity.background`.
+
+A live session's icon takes the color of its agent, `agentActivity.claude`
+(orange) or `agentActivity.codex` (green); its shape gives the state. The idle
+and compacting icons are image files and keep their default agent colors.
 
 ## Limits
 

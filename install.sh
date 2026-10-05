@@ -30,13 +30,16 @@ if [ -d "$HOME/.codex" ]; then
   CODEX="$HOME/.codex/hooks.json"
   [ -f "$CODEX" ] || echo '{}' > "$CODEX"
   cp "$CODEX" "$CODEX.bak"
-  jq --arg hook "$HOOK" --arg events "$EVENTS" --arg note "$NOTE" '
-    def entry($ev): {hooks: [{type: "command", command: ($hook + " " + $ev + " codex" + $note), timeout: 10}]};
-    def has($list; $ev): any($list[]?; .hooks[]?.command | tostring | test("log-event\\.sh " + $ev + " codex( |$)"));
+  # Codex has no PostToolUseFailure / PermissionDenied / Notification; it has PermissionRequest and Interrupt instead.
+  # Our entries are rewritten on each run (Codex asks to trust a hook again whenever its definition changes).
+  jq --arg hook "$HOOK" --arg events "$EVENTS PermissionRequest Interrupt" --arg note "$NOTE" '
+    def entry($ev): {hooks: [{type: "command", command: ($hook + " " + $ev + " codex" + $note), async: ($ev != "SessionEnd"),
+      timeout: (if $ev == "SessionEnd" or $ev == "Interrupt" then 3 else 10 end)}]};
+    def ours: any(.hooks[]?; .command | tostring | test("log-event\\.sh "));
     reduce ($events | split(" ") | map(select(. != "PostToolUseFailure" and . != "PermissionDenied" and . != "Notification")))[] as $ev (.;
-      .hooks[$ev] = (if has((.hooks[$ev] // []); $ev) then .hooks[$ev] else ((.hooks[$ev] // []) + [entry($ev)]) end))
+      .hooks[$ev] = ((.hooks[$ev] // []) | map(select(ours | not))) + [entry($ev)])
   ' "$CODEX" > "$tmp" && mv "$tmp" "$CODEX"
-  echo "Codex hooks: $CODEX (Codex will ask you to trust them once)"
+  echo "Codex hooks: $CODEX (they stay inactive until you trust them: run /hooks in the Codex TUI)"
 fi
 
 # --- VS Code extension (dev install via symlink) ---------------------------

@@ -245,6 +245,26 @@
           "highContrast": "#c9b8ea",
           "highContrastLight": "#7d5bb8"
         }
+      },
+      {
+        "id": "agentActivity.claude",
+        "description": "Agent Activity: a live Claude Code session",
+        "defaults": {
+          "dark": "#e9a07c",
+          "light": "#c2603a",
+          "highContrast": "#e9a07c",
+          "highContrastLight": "#c2603a"
+        }
+      },
+      {
+        "id": "agentActivity.codex",
+        "description": "Agent Activity: a live Codex session",
+        "defaults": {
+          "dark": "#7fd1b2",
+          "light": "#0f8f6e",
+          "highContrast": "#7fd1b2",
+          "highContrastLight": "#0f8f6e"
+        }
       }
     ]
   }
